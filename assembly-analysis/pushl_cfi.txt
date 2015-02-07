@@ -1,0 +1,26 @@
+在arch/x86/kernel/entry_32.S里有CFI相关的宏：
+pushl_cfi 和CFI_ADJUST_CFA_OFFSET 
+其定义：
+arch/x86/include/asm/dwarf2.h
+#define CFI_ADJUST_CFA_OFFSET .cfi_adjust_cfa_offset
+
+ .macro pushl_cfi reg
+ pushl \reg
+ CFI_ADJUST_CFA_OFFSET 4
+ .endm
+.cfi_adjust_cfa_offset是gcc的assembler directives，用于产生dwarf格式的调试信息。每当有栈指针变化时都要使用它。所以entry_32.S里使用push_cfi对push和.cfi_adjust_cfa_offset进行封装。并且修改esp后要使用CFI_ADJUST_CFA_OFFSET，如：
+sysenter_audit:
+ testl $(_TIF_WORK_SYSCALL_ENTRY & ~_TIF_SYSCALL_AUDIT),TI_flags(%ebp)
+ jnz syscall_trace_entry
+ addl $4,%esp
+ CFI_ADJUST_CFA_OFFSET -4
+
+CFI: Call Frame Information 
+CFI macros are used to generate dwarf2 unwind information for better backtraces.
+
+Ref:
+http://www.cnblogs.com/zqingnn/archive/2011/01/05/1926384.html
+http://en.wikipedia.org/wiki/DWARF
+http://stackoverflow.com/questions/7534420/gas-explanation-of-cfi-def-cfa-offset
+http://www.cnblogs.com/godjesse/archive/2012/11/08/2758428.html
+https://sourceware.org/binutils/docs/as/CFI-directives.html#CFI-directives

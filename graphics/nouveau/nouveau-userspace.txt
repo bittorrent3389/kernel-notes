@@ -1,0 +1,47 @@
+pushbuffer:
+[drm/nouveau]
+=============
+分配pushbuf
+-----------
+NVAccelCommonInit
+	|_nouveau_pushbuf_new
+		|_drmCommandWriteRead
+		|_nvpb = calloc(1, sizeof(*nvpb) + nr * sizeof(*nvpb->bos));
+		|_nouveau_bo_new
+			|_abi16_bo_init
+				|_abi16_bo_info
+
+
+
+//wjx:获得/增加pushbuf空间
+--------------------------
+nouveau_pushbuf_space
+	|_nouveau_bo_ref
+	|_nouveau_bo_map
+
+[xf86-video-nouveau]
+====================
+先写入再kick
+------------
+NV11SyncToVBlank
+	PUSH_SPACE	//分配空间
+	... ...
+	BEGIN_NV04(push, SUBC_BLIT(0x00000130), 1);
+	PUSH_DATA (push, 0);
+nouveau_pushbuf_kick(push, push->channel);
+
+
+nouveau_pushbuf_kick
+	|_pushbuf_flush
+		|_pushbuf_submit
+			//数据放入nouveau_pushbuf_krec->struct
+			//drm_nouveau_gem_pushbuf_push push[]
+			|_nouveau_pushbuf_data
+			|_drmCommandWriteRead(DRM_NOUVEAU_GEM_PUSHBUF)
+
+push的指令
+---------
+如
+BEGIN_NV04(push, SUBC_2D(0x088c), 1);
+PUSH_DATA (push, 0);
+先指定要push的command的数量，后面跟着相应的command

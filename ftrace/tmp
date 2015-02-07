@@ -1,0 +1,36 @@
+ftrace/ftrace-analysis.txt
+	ftrace_regs_caller
+
+
+kpatch core.c
+
+	/*
+	 * wjx:直接返回到新函数，这时因为是返回进去的，而不是call进去的，所以应该不会压入
+	 * 返回地址。如果使用了CONFIG_HAVE_FENTRY还好，新函数直接返回到原函数的返回地址，
+	 * 如果没有使用呢，mcount将会在原函数prologue之后才被调用，这样，新的函数就不能正常
+	 * 返回了（栈上当前位置不是返回地址）。
+	 * ???试验一下，在不使用CONFIG_HAVE_FENTRY选项的情况下有什么效果。
+	 * This is where the magic happens.  Update regs->ip to tell ftrace to return
+	 * to the new function.
+	 *
+	 * If there are multiple patch modules that have registered to patch the same
+	 * function, the last one to register wins, as it'll be first in the hash
+	 * bucket.
+	 */
+	void notrace kpatch_ftrace_handler(unsigned long ip, unsigned long parent_ip,
+
+	kpatch_verify_activeness_safety
+
+	dump_trace
+
+	rcu
+
+	nmi
+
+	stop_machine
+
+	state machine
+
+	add_taint
+
+	... ...

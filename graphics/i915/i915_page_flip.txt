@@ -1,0 +1,79 @@
+DRM_IOCTL_MODE_PAGE_FLIP
+drm_mode_page_flip_ioctl
+	|_drm_crtc_check_viewport
+	|_crtc->funcs->page_flip(crtc, fb, e, page_flip->flags);
+	  intel_crtc_page_flip
+	  	|_INIT_WORK(&work->work, intel_unpin_work_fn);
+		|_intel_crtc->unpin_work = work;
+		|_work->gtt_offset = i915_gem_obj_ggtt_offset(obj) + intel_crtc->dspaddr_offset;
+		|_if(use_mmio_flip(ring, obj)) {
+			  //mmio flip
+			  intel_queue_mmio_flip()
+			  intel_mmio_flip_work_func()
+			  	|_intel_do_mmio_flip()
+				|_I915_WRITE(DSPSURF(intel_crtc->plane),
+					   intel_crtc->unpin_work->gtt_offset);
+		  } else {
+			  //通过ringbuffer做command streamer flips
+			  dev_priv->display.queue_flip()
+			  intel_gen7_queue_flip {
+				intel_ring_emit(ring, MI_DISPLAY_FLIP_I915 | plane_bit);
+				intel_ring_emit(ring, (fb->pitches[0] | obj->tiling_mode));
+				intel_ring_emit(ring, intel_crtc->unpin_work->gtt_offset);
+				intel_ring_emit(ring, (MI_NOOP));
+
+				intel_mark_page_flip_active(intel_crtc);
+				__intel_ring_advance(ring);
+			  }
+		  }
+page flip有两种方式，
+mmio flip:
+将gem对象的起始地址gtt_offset写入PRI_SURF(DSPSURF)寄存器。
+command streamer flips:
+通过ringbuffer的MI_DISPLAY_FLIP_I915 命令写入gtt_offset。
+见intel-gfx-prm-osrc-hsw-commandreference-registers_0.pdf P726:
+A write to this register is considered a flip and can cause a flip done interrupt if the interrupt registers are
+configured for that. The values in this register may be updated through MMIO writes or through command
+streamer initiated flips.
+
+
+IRQ set:
+
+intel_irq_init
+dev->driver->irq_handler = ironlake_irq_handler;
+	|_de_iir = I915_READ(DEIIR);
+	  ivb_display_irq_handler(dev, de_iir);
+	  	|_if (de_iir & DE_PLANE_FLIP_DONE_IVB(pipe)) {
+			intel_prepare_page_flip(dev, pipe);
+			intel_finish_page_flip_plane(dev, pipe);
+				|_do_intel_finish_page_flip
+					|_page_flip_completed
+						|_drm_send_vblank_event
+							|_send_vblank_event
+								|_list_add_tail(&e->base.link,
+									      &e->base.file_priv->event_list);
+								|_wake_up_interruptible(&e->base.file_priv->event_wait);
+						|_queue_work(dev_priv->wq, &work->work);
+		  }
+
+select drm fd:
+sys_select
+	|_core_sys_select
+		|_do_select
+			|_mask = (*f_op->poll)(f.file, wait);
+			  drm_poll
+			  	|_poll_wait(filp, &file_priv->event_wait, wait)
+					|_ __pollwait
+						|_init_waitqueue_func_entry(&entry->wait, pollwake);
+						|_add_wait_queue(wait_address, &entry->wait);
+				|_if (!list_empty(&file_priv->event_list))
+
+registers:
+ironlake_irq_handler中的各个寄存器，如
+u32 de_iir, gt_iir, de_ier, sde_ier = 0;
+的解释，见intel-gfx-prm-osrc-hsw-display.pdf 187～188页的说明。
+
+ivb_display_irq_handler()
+中检测寄存器de_iir寄存器中的各位，如DE_ERR_INT_IVB，DE_PLANE_FLIP_DONE_IVB(pipe)
+可见Volume 2c: Command Reference: Registers, P484, P2654
+Display Engine Interrupt Bit Definition

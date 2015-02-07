@@ -1,0 +1,25 @@
+linux内核watchdog实现于kernel/watchdog.c，其初始化函数lockup_detector_init
+在系统初始化时被调用：
+start_kernel()-->rest_init()-->kernel_thread(kernel_init)-->
+kernel_init_freeable()-->lockup_detector_init()。
+
+lockup_detector_init()通过smpboot_register_percpu_thread()-->for_each_online_cpu: 
+__smpboot_create_thread()-->kthread_create_on_cpu()在每个cpu上创建一个线程，线程函数为
+smpboot_thread_fn()，参数为一个smpboot_thread_data结构，其中包含了在watchdog.c中的
+数据结构smp_hotplug_thread watchdog_threads。这个线程就是每个cpu上的watchdog。
+
+smpboot_thread_fn函数第一次运行时，case HP_THREAD_NONE成立，通过ht->setup调用
+watchdog_enable()启动watchdog: 设置hrtimer，定时时间为5s。 
+为当前watchdog线程设置一个高优先级：watchdog_set_prio(SCHED_FIFO, MAX_RT_PRIO - 1);
+
+watchdog线程平时通过set_current_state(TASK_INTERRUPTIBLE)-->schedule()睡眠。
+而当定时器时间到时，watchdog_timer_fn()会调用watchdog_interrupt_count()更新hrtimer_interrupts，
+这样下一次watchdog_should_run()就会返回true。调用wake_up_process()唤醒当前cpu上的watchdog。
+
+watchdog线程被唤醒后，会通过ht->thread_fn调用watchdog():
+更新soft_lockup_hrtimer_cnt为hrtimer_interrupts。
+调用__touch_watchdog，更新当前时间到watchdog_touch_ts，这也就是watchdog线程最后一次被高度的时间。
+这样，当hrtimer定时器下一次时间到时，watchdog_timer_fn()会读取watchdog_touch_ts，并通过is_softlockup，
+判断上一次watchdog线程调度后，是否己经经过了get_softlockup_thresh()这么多时间（20s）。
+因为watchdog线程是优先级非常高的实时线程，如果其20s没有得到调度，则说明
+some task is hogging the cpu，这时，打印BUG: soft lockup，并打印堆栈等信息。

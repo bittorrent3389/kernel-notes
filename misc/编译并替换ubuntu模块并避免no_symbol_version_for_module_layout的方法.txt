@@ -1,0 +1,33 @@
+出现这个错误的原因是缺少Module.symvers文件。
+所以一种解决方法就是安装相同内核版本的代码后完整编译一遍，这样会生成Module.symers文件
+
+下面是不需完整编译代码的方法：
+
+１安装当前内核对应的源码：synaptics或sudo apt-get source linux-source-$(uname -r)
+
+２ cd /usr/src
+
+３ tar jxvf linux-source-x.xx.x.tar.bz2
+这会通过符号链接，解压linux-source-x.xx.x/目录下的内核压缩包，并与linux-source-x.xx.x/目录合并。
+
+４ cd linux-source-x.xx.x
+
+５ make oldconfig或cp /boot/config-$(uname -r) .config
+(也可以make localmodconfig去掉不必要的模块)
+
+６ cp /usr/src/linux-headers-$(uname -r)/Module.symvers .
+
+7 make prepare
+
+8 make scripts
+
+9 make M=drivers/hid/
+
+10 rmmod usbhid
+
+11 insmod drivers/hid/usbhid/usbhid.ko
+
+
+Ref:
+http://askubuntu.com/questions/14627/no-symbol-version-for-module-layout-when-trying-to-load-usbhid-ko
+http://askubuntu.com/questions/168279/how-do-i-build-a-single-in-tree-kernel-module

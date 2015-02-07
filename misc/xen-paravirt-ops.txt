@@ -1,0 +1,28 @@
+startup_xen	arch/x86/xen/xen-head.S
+	|
+xen_start_kernel	arch/x86/xen/enlighten.c
+
+	替换pv_init_ops为xen_init_ops:
+	pv_init_ops = xen_init_ops;
+	这样，apply_paravirt里pv_init_ops.patch调用的就是xen_patch:
+
+static unsigned xen_patch(u8 type, u16 clobbers, void *insnbuf,
+			  unsigned long addr, unsigned len)
+{
+
+#define SITE(op, x)							\
+	case PARAVIRT_PATCH(op.x):					\
+	if (have_vcpu_info_placement) {					\
+		start = (char *)xen_##x##_direct;			\
+		end = xen_##x##_direct_end;				\
+		reloc = xen_##x##_direct_reloc;				\
+	}								\
+	goto patch_site
+
+	switch (type) {
+		SITE(pv_irq_ops, irq_enable);
+		SITE(pv_irq_ops, irq_disable);
+		SITE(pv_irq_ops, save_fl);
+		SITE(pv_irq_ops, restore_fl);
+	这样，在xen的情况下，要patch的新代码就是xen_irq_enable_direct到xen_irq_enable_direct_end
+等，这些定义于arch/x86/xen/xen-asm.S

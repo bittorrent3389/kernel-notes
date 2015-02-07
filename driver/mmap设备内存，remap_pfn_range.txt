@@ -1,0 +1,21 @@
+LDD3 426页的simple_remap_mmap例子中，直接使用了vma->vm_pgoff来做remap_pfn_range
+的第三个参数pfn,即相应页面的物理页号，这种情况一定是将整个物理内存做为了一个设备
+即/dev/mem来open，然后再做mmap的，因为vma->vm_pgoff是要映射的区域在映射文件中的
+偏移，即对应
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+中的offset/PAGE_SIZE
+
+
+因为设备的内存在物理内存地址空间的位置是固定的（可以通过/proc/iomem看到），所以在
+open了/dev/mem后调用mmap设备内存时一定使用了设备内存在物理内存空间中的偏移作为
+offset。
+
+
+425页对remap_pfn_range参数pfn的解释：For most uses, the vm_pgoff field of the
+VMA structure contains exactly the value you need.
+也应该这样理解。
+
+
+反之，如果open的是设备文件，则在mmap中，vma->pgoff则对应要映射的区域在设备中的
+偏移（以页为单位），此时，因为要传给remap_pfn_range的参数pfn仍然应该是全局的
+物理页号，驱动里就要自己做转换，根据设备内存在物理内存中的位置，找出全局物理页号。

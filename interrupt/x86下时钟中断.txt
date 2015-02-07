@@ -1,0 +1,30 @@
+x86时钟中断的注册是在
+arch/x86/kernel/time.c
+
+static struct irqaction irq0  = {
+ .handler = timer_interrupt,
+ .flags = IRQF_DISABLED | IRQF_NOBALANCING | IRQF_IRQPOLL | IRQF_TIMER,
+ .name = "timer"
+};
+
+
+void __init setup_default_timer_irq(void)
+{
+ setup_irq(0, &irq0);
+}
+
+所以，时钟中断处理函数为timer_interrupt:
+/*
+ * Default timer interrupt handler for PIT/HPET
+ */
+static irqreturn_t timer_interrupt(int irq, void *dev_id)
+{
+ global_clock_event->event_handler(global_clock_event);
+ return IRQ_HANDLED;
+}
+
+对应的event_handler有可能是tick_handle_periodic，相关定义都在kernel/time/目录下。
+如果是tick_handle_periodic(),
+tick_handle_periodic-->tick_periodic-->do_timer增加tick
+tick_handle_periodic-->tick_periodic-->update_process_times触发时钟中断软中断。
+不过这些还要对时间系统进行研究。

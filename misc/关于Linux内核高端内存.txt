@@ -1,0 +1,59 @@
+在内核中没有线性映射的物理内存称为高端内存（通常是大于896M的物理内存）。
+对于3G+896M ~ 4G的虚拟内存，VMALLOC_START～VMALLOC_END用于vmalloc。即给出所要内存大小，vmalloc会先找出一块虚拟内存，并在大于896M的高端物理内存中找到空闲页，建立映射。
+
+PKMAP_BASE开始的4M（不开启PAE情况）虚拟内存称为永久映射区(Persistent kernel mappings)。4M只需占一个页表，用pkmap_page_table标明，可以映射1024个物理页。
+同时用int数组pkmap_count来标明1024个页表项的使用计数，就可以知道哪个页的虚拟地址是空闲的进而可以分配。
+函数kmap(struct page *page)即是在有一个物理页（可以通过alloc_pages得到）的情况下，在永久映射区找到一块空闲的虚拟地址，并建立映射。
+kmap通过遍历pkmap_count找到空闲的虚拟地址，然后初始化page_address_map结构代表这个物理页，用其中的指针virtual指向找到的虚拟地址，将这个page_address_map结构挂入hash表page_address_htable，这样通过page结构指针可以快速找到page_address_map结构进而找到其在永久映射区的虚拟地址。
+当找不到虚拟地址时，kmap会睡眠，所以不能用在中断和持有锁的代码中使用。
+这里所谓永久映射区应该是相对vmalloc分配区来说的，虚拟区间是永久的。
+
+临时映射区的分配也和永久映射区相似，也是有物理页的情况下找到虚拟内存，使用kmap_atomic分配。
+以前的内核中：
+   特点是利用了固定内核映射中的一段空间，每个CPU有13个窗口，每个窗口的功能是固定的，申请的目标窗口由参数指定：
+   kmap_atomic(struct page *page, enum km_type type)。
+   临时映射区的分配用kmap_pte做为一个参照物，kmap_pte被初始化为FIX_KMAP_BEGIN对应的页表项。设置相应窗口时用kmap_pte-idx的形式。
+   因为不同CPU对应不同的窗口区，所以不同CPU使用相同的窗口不会覆盖，但同一CPU上使用相同的窗口（相同页表项）的话就有可能覆盖，所以以前的kmap_atomic()接口中，做过映射后要求不能睡眠（见ldd3 P418,chapter 15），并且同一时间内不能有多于一个映射存在（如kmap_skb_frag，不能同时映射多个fragment，见ldd3 Page532,chapter 17）。当前内核的atomic kmap通过stack的方式来实现，应该没有这些限制了。
+
+现在的内核中，修改了kmap_atomic的接口，不需要参数type了：
+commit 3e4d3af501cccdc8a8cca41bdbe57d54ad7e7e73
+mm: stack based kmap_atomic()
+
+对这些虚存页以栈的方式管理，每个cpu的这13个窗口位置不变，只是现在以栈的方式来使用了。通过调用kmap_atomic_idx_push，获取下一个页内存的序号：
+void *kmap_atomic(struct page *page)
+void *kmap_atomic_prot(struct page *page, pgprot_t prot)
+{
+	/* even !CONFIG_PREEMPT needs this, for in_atomic in do_page_fault */
+	pagefault_disable();
+	if (!PageHighMem(page))
+		return page_address(page);
+	type = kmap_atomic_idx_push();
+	idx = type + KM_TYPE_NR*smp_processor_id();
+	vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
+	BUG_ON(!pte_none(*(kmap_pte-idx)));
+	set_pte(kmap_pte-idx, mk_pte(page, prot));	
+}
+EXPORT_SYMBOL(kmap_atomic_prot);
+static inline int kmap_atomic_idx_push(void)
+{
+	int idx = __this_cpu_inc_return(__kmap_atomic_idx) - 1;
+}
+当调用一次kmap_atomic后，__kmap_atomic_idx为１，也就使用了这个“栈”上的第一个页。如果连续调用多次kmap_atomic()(nested atomic mapping)，则__kmap_atomic_idx会大于１，也就是说会使用多个页。但此时，的调用kunmap_atomic的顺序必须相反，即要符合栈的顺序，否则会释放错误的内存，如这个patch所解决的问题。和下面代码所示：
+crypto/async_tx/async_memcpy.c
+		dest_buf = kmap_atomic(dest) + dest_offset;
+		src_buf = kmap_atomic(src) + src_offset;
+
+		memcpy(dest_buf, src_buf, len);
+
+		kunmap_atomic(src_buf);
+		kunmap_atomic(dest_buf);
+
+固定映射区的不同段空间是固定用于某种目的的，所以称为固定映射区，并不是指映射到的物理页是固定的。
+
+
+参考：
+http://blog.csdn.net/dog250/article/details/6129826
+http://blog.csdn.net/hanchaoman/article/details/6942138
+http://blog.csdn.net/hanchaoman/article/details/6942140
+http://hi.baidu.com/zj19880205/blog/item/242b6a562ea3191b0df3e31c.html
+http://blog.csdn.net/gxfan/article/details/2723455

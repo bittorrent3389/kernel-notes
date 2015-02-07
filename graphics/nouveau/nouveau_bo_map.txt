@@ -1,0 +1,26 @@
+找到对应的page:
+nouveau_ttm_mmap
+	ttm_bo_mmap
+		vma->vm_ops = &ttm_bo_vm_ops;
+			ttm_bo_vm_fault
+				page = ttm->pages[page_offset];
+
+ttm->pages页表的分配：
+nouveau_bo_new
+	ttm_bo_init
+		ttm_bo_validate
+			ttm_bo_add_ttm
+			bo->ttm = bdev->driver->ttm_tt_create
+			nouveau_ttm_tt_create
+				nouveau_sgdma_create_ttm
+					ttm_dma_tt_init
+						ttm_dma_tt_alloc_page_directory
+
+page的分配：
+ttm_bo_vm_fault
+	struct ttm_bo_driver nouveau_bo_driver
+	.ttm_tt_populate = &nouveau_ttm_tt_populate
+		drm_prime_sg_to_page_addr_arrays
+		ttm_pool_populate
+		nv_device_map_page
+			pci_map_page

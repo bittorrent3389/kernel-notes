@@ -1,0 +1,8 @@
+include/uapi/asm-generic/ioctl.h:
+
+IOCTL用一个３２位数来表示一个command，其中从低位起第二个８位用于保存type，即magic-number，由于只有８位，所以用２５６个ASCII码来表示。
+每个magic-number下，有８位做为number，即sequential序号。
+
+由于magic-number有限，所以一些驱动共用同一个magic-number，只要number不同，就能保证command不同。（不考虑size和direction的情况下。）
+
+但是，由于设备太多，实际上,type和number都冲突的情况不可避免。尽量不冲突只是一个目标。

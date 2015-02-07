@@ -1,0 +1,21 @@
+tasklet_kill()的作用应该是一个同步的作用，如果目标参数正处在TASKLET_STATE_SCHED或TASKLET_STATE_RUN状态，
+则等待其执行完成，从而保证此函数返回后tasklet队列中没有尚未执行的目标tasklet，
+所以常在关闭设备或移除模块时使用，如果一个tasklet会调度自己，则在调用tasklet_kill前应确保其不会调度自己。
+如ldd3中所说：
+void tasklet_kill(struct tasklet_struct *t);
+This function ensures that the tasklet is not scheduled to run again; it is usually
+called when a device is being closed or the module removed. If the tasklet is
+scheduled to run, the function waits until it has executed. If the tasklet resched-
+ules itself, you must prevent it from rescheduling itself before calling tasklet_kill,
+as with del_timer_sync.
+如果一个tasklet会调度自己，而在调用tasklet_kill前又没有阻止其调度自己，则这个tasklet会在tasklet_action中
+因为没有TASKLET_STATE_SCHED标志位而执行BUG()。
+
+注意tasklet_kill只是清除了TASKLET_STATE_SCHED标志位，并没有将已在队列中的tasklet移除，所以LKD中的描述是不准确的：
+LKD P146:
+You can remove a tasklet from the pending queue via tasklet_kill().This function
+receives a pointer as a lone argument to the tasklet’s tasklet_struct. Removing a
+scheduled tasklet from the queue is useful when dealing with a tasklet that often resched-
+ules itself.This function first waits for the tasklet to finish executing and then it removes
+the tasklet from the queue. Nothing stops some other code from rescheduling the tasklet,
+of course.This function must not be used from interrupt context because it sleeps.

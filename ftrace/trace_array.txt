@@ -1,0 +1,24 @@
+kernel/trace/trace_functions_graph.c
+static struct trace_array *graph_array;
+    在function_graph运行时指向其对应的trace_array结构，global_trace：
+
+$echo function_graph > current_tracer
+[kernel/trace/trace.c]
+    tracer_init_debugfs
+    init_tracer_debugfs(&global_trace, d_tracer);
+    trace_create_file("current_tracer", 0644, d_tracer,tr, &set_tracer_fops);
+    tracing_set_trace_write
+    tracing_set_tracer
+    tracer_init
+[kernel/trace/trace_functions_graph.c]
+    graph_trace_init    (graph_trace.init=graph_trace_init)
+    set_graph_array
+
+    trace_array中包含trace_buffer结构，而trace_buffer中又含有一个每个cpu独立的
+struct trace_array_cpu结构指针data，也就是说每个cpu都有一个struct trace_array_cpu
+结构：
+[kernel/trace/trace.c]
+    tracer_alloc_buffers
+    allocate_trace_buffers
+    allocate_trace_buffer
+    buf->data = alloc_percpu(struct trace_array_cpu);

@@ -1,0 +1,10 @@
+需要导出函数而使用EXPORT_SYMBOL时需要用头文件：
+#include <linux/module.h>
+
+这时如果文件中使用了tracepoint，如
+#define CREATE_TRACE_POINTS
+#include <trace/events/syscalls.h>
+
+要把#include <linux/module.h>放到前面，否则会有重复定义错误编译无法通过
+
+Will study More about tracepoint.

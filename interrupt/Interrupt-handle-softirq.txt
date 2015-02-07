@@ -1,0 +1,36 @@
+中断处理的总入口是do_IRQ，以x86为例，这个函数定义在arch/x86/kernel/irq.c：
+/*
+ * do_IRQ handles all normal device IRQ's (the special
+ * SMP cross-CPU interrupts have their own specific
+ * handlers).
+ */
+unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
+{
+ struct pt_regs *old_regs = set_irq_regs(regs);
+
+ /* high bit used in ret_from_ code  */
+ unsigned vector = ~regs->orig_ax;
+ unsigned irq;
+
+ irq_enter();
+ exit_idle();
+
+ irq = __this_cpu_read(vector_irq[vector]);
+
+ if (!handle_irq(irq, regs)) {
+ ack_APIC_irq();
+
+ if (printk_ratelimit())
+ pr_emerg("%s: %d.%d No irq handler for vector (irq %d)\n",
+ __func__, smp_processor_id(), vector, irq);
+ }
+
+ irq_exit();
+
+ set_irq_regs(old_regs);
+ return 1;
+}
+其中handle_irq会调用具体的中断处理函数处理此中断，中断处理结束后，会调用定义在kernel/softirq.c里的irq_exit()，这里会检查是否有softirq等待执行：
+ if (!in_interrupt() && local_softirq_pending())
+ invoke_softirq();
+如果有，则调用invoke_softirq()，要么直接调用do_softirq()，要么唤醒ksoftirqd处理softirq。

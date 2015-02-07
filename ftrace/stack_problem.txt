@@ -1,0 +1,252 @@
+通过下面代码在save_stack_trace里dump_stack:
+===========================================
+
+    printk("-----dump stack in __ftrace_ops_list_func------\n");
+    dump_stack();
+    printk("-----------------------\n");
+    index = current->curr_ret_stack;
+    for (; index >= 0; index--) {
+        printk("index:%d\n\tret=%pS\n\tfunc=%pS\n\tcalltime=%llu\n\tsubtime=%llu\n\tfp=%p\n",
+                index,
+                (void *)(current->ret_stack[index].ret),
+                (void *)(current->ret_stack[index].func),
+                current->ret_stack[index].calltime,
+                current->ret_stack[index].subtime,
+                (void *)(current->ret_stack[index].fp)
+                );
+    }
+    printk("-----------------------------------------------\n");
+
+打印出的log如下：
+================
+[  383.932811] Call Trace:
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c1012546>] print_context_stack+0xc6/0xd0
+[  383.932811]  [<c101b651>] save_stack_trace+0x21/0x110
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c10116b5>] dump_trace+0xb5/0x1b0
+[  383.932811]  [<c10f2db2>] ? ring_buffer_unlock_commit+0x22/0x1e0
+[  383.932811]  [<c1088009>] ? update_curr+0x9/0x1e0
+[  383.932811]  [<c1088009>] ? update_curr+0x9/0x1e0
+[  383.932811]  [<c108a468>] ? enqueue_entity+0x38/0xe20
+[  383.932811]  [<c10ecbd6>] ftrace_ops_list_func+0xe6/0x100
+[  383.932811]  [<c165322b>] ftrace_call+0x5/0xb
+[  383.932811]  [<c108800e>] ? update_curr+0xe/0x1e0
+[  383.932811]  [<c108a439>] ? enqueue_entity+0x9/0xe20
+[  383.932811]  [<c108b297>] ? enqueue_task_fair+0x47/0x7e0
+[  383.932811]  [<c1041177>] ? prepare_ftrace_return+0x77/0xa0
+[  383.932811]  [<c108a439>] ? enqueue_entity+0x9/0xe20
+[  383.932811]  [<c108a468>] enqueue_entity+0x38/0xe20
+[  383.932811]  [<c1101490>] ? ftrace_push_return_trace+0x50/0x140
+[  383.932811]  [<c107b605>] ? enqueue_task+0x45/0x70
+[  383.932811]  [<c108b259>] ? enqueue_task_fair+0x9/0x7e0
+[  383.932811]  [<c107b605>] ? enqueue_task+0x45/0x70
+[  383.932811]  [<c1041177>] ? prepare_ftrace_return+0x77/0xa0
+[  383.932811]  [<c108b259>] ? enqueue_task_fair+0x9/0x7e0
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c1012666>] show_trace_log_lvl+0x46/0x50
+[  383.932811]  [<c107b61d>] ? enqueue_task+0x5d/0x70
+[  383.932811]  [<c107b576>] ? update_rq_clock.part.80+0x6/0x50
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c1011802>] show_stack_log_lvl+0x52/0xe0
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c10126c6>] show_stack+0x26/0x50
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c1643ce1>] dump_stack+0x41/0x52
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c11005b9>] stack_trace_call+0x119/0x340
+[  383.932811]  [<c16532c1>] ftrace_graph_caller+0x19/0x19
+[  383.932811]  [<c108b297>] enqueue_task_fair+0x47/0x7e0
+
+----------------
+
+[  383.932811] 0 - func:update_curr+0xe/0x1e0 - index:2752
+[  383.932811] 1 - func:dump_trace+0xb5/0x1b0 - index:2752
+[  383.932811] 2 - func:ftrace_ops_list_func+0xe6/0x100 - index:2752
+[  383.932811] 3 - func:ftrace_call+0x5/0xb - index:2752
+[  383.932811] 4 - func:enqueue_entity+0x38/0xe20 - index:2684
+[  383.932811] 5 - func:return_to_handler+0x0/0xf - index:2592
+[  383.932811] 6 - func:save_stack_trace+0x6c/0x110 - index:2592
+[  383.932811] 7 - func:return_to_handler+0x0/0xf - index:2512
+[  383.932811] 8 - func:stack_trace_call+0x119/0x340 - index:2512
+[  383.932811] 9 - func:return_to_handler+0x0/0xf - index:2484
+[  383.932811] 10 - func:enqueue_task_fair+0x47/0x7e0 - index:2484
+[  383.932811] 11 - func:return_to_handler+0x0/0xf - index:2472
+[  383.932811] 12 - func:enqueue_task+0x45/0x70 - index:2472
+
+    其栈中正常的调用顺序为：
+print_context_stack+0xc6/0xd0
+dump_trace+0xb5/0x1b0
+show_trace_log_lvl+0x46/0x50
+show_stack_log_lvl+0x52/0xe0
+show_stack+0x26/0x50
+dump_stack+0x41/0x52
+save_stack_trace+0x21/0x110(dump_stack不trace，无mcount，所以不会修改其返回地址为return_to_handler)
+stack_trace_call+0x119/0x340(return_to_handler)
+ftrace_ops_list_func+0xe6/0x100
+ftrace_call+0x5/0xb
+enqueue_entity+0x47/0x7e0
+enqueue_task_fair+0x47/0x7e0(return_to_handler)
+    但是这实际打印出的栈中stack_trace_call+0x119/0x340,show_stack+0x26/0x50,show_stack_log_lvl+0x52/0xe0
+show_trace_log_lvl+0x46/0x50等项被显示到了下面。
+    这是因为在dump_stack的路径上的各函数（dump_stack除外）都被graph trace，进而其真实的返回地址被保存到了
+current->ret_stack[]中，而dump_stack对栈的检验是从show_stack中的一个局部变量的位置开始的，相当于栈上面的各个
+return_to_handler被跳过了，但ret_stack[]中的相应项却没有被跳过，这些项被栈上后面的return_to_handler所对应并
+打印出来。
+
+分析如下：
+==========
+                 ret addr in stack                  ret addr of which func     real ret addr in ret_stack[]
+                                                                                                        
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |return_to_handler              +–––+print_trace_address+––––+print_context_stack+0xc6/0xd0| 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |return_to_handler              +–––+print_context_stack+––––+dump_trace+0xb5/0x1b0        | 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |return_to_handler              +––––––+dump_trace+––––––––––+show_trace_log_lvl+0x46/0x50 | 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |return_to_handler              +–––+show_trace_log_lvl+–––––+show_stack_log_lvl+0x52/0xe0 | 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |return_to_handler              +–––+show_stack_log_lvl+–––––+show_stack+0x26/0x50         | 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+dump from here – +return_to_handler              +––––––+show_stack+––––––––––+dump_stack+0x41/0x52         | 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |save_stack_trace+0x21/0x110    |                            |                             | 
+                 +–––––––––––––––––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |return_to_handler              +–––+save_stack_trace+–––––––+stack_trace_call+0x119/0x340 | 
+                 +––––––––––––––––––––-––––––––––+                            +––––––––––––––––––––––––––---+ 
+                 |ftrace_ops_list_func+0xe6/0x100|                            |                             | 
+                 +––––––––––––––––––––=––––––––––+                            |                             | 
+                 |ftrace_call+0x5/0xb            |                            |                             | 
+                 +––––––––––––––-––––––––––––––––+                            |                             | 
+                 |enqueue_entity+0x38/0xe20      |                            |                             | 
+                 +––––––––––––––-––––––––––––––––+                            +––––––––––––––––––––––––––---+ 
+
+然而有些情况打印出的log却是正常的：
+==================================
+
+原因可能是function graph里已经満了，不再对dump_stack进行trace了：
+extern unsigned long ftrace_graph_funcs[FTRACE_GRAPH_MAX_FUNCS];
+kernel/trace/trace.h
+
+
+使用function_graph的情况下stack_trace异常的原因相同，分析如下：
+===============================================================
+//log code:
+__save_stack_address:
+	if (trace->skip == 3) {
+		printk("==============DUMP STACK BEGIN===============\n");
+		printk("When trace->skip=3, addr=%lu\n", addr);
+		//dump_stack();
+		printk("===============DUMP STACK END================\n");
+	}
+-----------------------------
+
+[ 3316.912481] Call Trace:
+[ 3316.912535]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.912580]  [<c1012546>] print_context_stack+0xc6/0xd0  (comes from dump_stack)
+
+[ 3316.912630]  [<c101b762>] __save_stack_address+0x92/0xb0
+
+//这里dump_stack()路径上的三个函数被栈上，三个值对应走了。
+//应该是巧合。
+[ 3316.912677]  [<c1652501>] ? ftrace_graph_caller+0x19/0x19    (1) 
+[ 3316.912722]  [<c10116b5>] dump_trace+0xb5/0x1b0          (comes from dump_stack)
+[ 3316.912767]  [<c1652501>] ? ftrace_graph_caller+0x19/0x19    (2)
+[ 3316.912812]  [<c1012666>] show_trace_log_lvl+0x46/0x50
+[ 3316.912860]  [<c1652501>] ? ftrace_graph_caller+0x19/0x19    (3)
+[ 3316.912905]  [<c1011802>] show_stack_log_lvl+0x52/0xe0
+[ 3316.912952]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.912996]  [<c10126c6>] show_stack+0x26/0x50
+[ 3316.913045]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.913092]  [<c1642f21>] dump_stack+0x41/0x52
+
+[ 3316.913138]  [<c1011609>] ? dump_trace+0x9/0x1b0
+[ 3316.913204]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.913249]  [<c101b79f>] save_stack_address+0x1f/0x30
+//这是从dump_trace返回的位置，本应该是ftrace_graph_caller+0x19/0x19与save_stack_trace+0x30/0x50，但因对位
+错误，现在成了print_context_stack+0x9f/0xd0。
+[ 3316.913325]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.913369]  [<c101251f>] print_context_stack+0x9f/0xd0  (comes from save_stack_trace)
+[ 3316.913426]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.913470]  [<c10116b5>] dump_trace+0xb5/0x1b0          (comes from save_stack_trace)
+[ 3316.913969]  [<c10ecb16>] ftrace_ops_list_func+0xe6/0x100
+[ 3316.914029]  [<c165246b>] ftrace_call+0x5/0xb
+[ 3316.914083]  [<c130c8cb>] ? memcpy+0xb/0x30
+[ 3316.914175]  [<f8cca5bd>] osl_memcpy+0xd/0x10 [wl]
+[ 3316.914222]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.914267]  [<c101b660>] save_stack_trace+0x30/0x50
+... ...
+[ 3316.915794]  [<c1652501>] ftrace_graph_caller+0x19/0x19
+[ 3316.915794]  [<c1100439>] stack_trace_call+0x119/0x340
+    所以skip3个，这种情况下stack_trace从dump_trace开始（dump_trace_stack[1]）:
+[ 3316.915794] 0 - func:memcpy+0xb/0x30 - index:3760
+[ 3316.915794] 1 - func:dump_trace+0xb5/0x1b0 - index:3760
+[ 3316.915794] 2 - func:ftrace_ops_list_func+0xe6/0x100 - index:3760
+[ 3316.915794] 3 - func:ftrace_call+0x5/0xb - index:3760
+[ 3316.915794] 4 - func:osl_memcpy+0xd/0x10 [wl] - index:3740
+[ 3316.915794] 5 - func:return_to_handler+0x0/0xf - index:3732
+[ 3316.915794] 6 - func:save_stack_trace+0x30/0x50 - index:3732
+... ...
+[ 3316.915794] 18 - func:return_to_handler+0x0/0xf - index:1872
+[ 3316.915794] 19 - func:stack_trace_call+0x119/0x340 - index:1872
+
+图解
+====
+//因为到达print_ftrace_graph_addr里取ret_stack时已经从ops->address返回了
+//（分别从printk_stack_address、和print_trace_address返回），所以栈上已经
+//不存在printk_stack_address和print_trace_address的返回地址对应的return_to_handler
+//ret_stack也就不存在这两个函数的返回地址
+//(print_trace_address+xxx和print_context_stack+0x9f/0xd0)。
+STACK                               REAL RET ADDR                       CURRENT MATCH
+//这部分因为使用了dump_stack才有
+//第一项是print_ftrace_graph_addr在print_context_stack上的返回地址。
+return_to_handler                   print_context_stack+0xc6/0xd0
+return_to_handler                   dump_trace+0xb5/0x1b0
+return_to_handler                   show_trace_log_lvl+0x46/0x50
+return_to_handler                   show_stack_log_lvl+0x52/0xe0
+return_to_handler                   show_stack+0x26/0x50
+return_to_handler                   dump_stack+0x41/0x52                print_context_stack+0xc6/0xd0
+__save_stack_address+0x92/0xb0
+//这部分情况不使用dump_stack，只使用stack_trace时就存在。
+return_to_handler                   save_stack_address+0x1f/0x30        show_stack+0x26/0x50
+return_to_handler                   print_context_stack+0x9f/0xd0       dump_stack+0x41/0x52
+return_to_handler                   dump_trace+0xb5/0x1b0               save_stack_address+0x1f/0x30
+return_to_handler                   save_stack_trace+0x30/0x50          print_context_stack+0x9f/0xd0
+return_to_handler                   stack_trace_call+0x119/0x340        dump_trace+0xb5/0x1b0
+ftrace_ops_listfunc+0xe6/0x100
+ftrace_call+0x5/0xb
+
+---
+不使用dump_stack情况的匹配应该是这样的：
+//因为到达print_ftrace_graph_addr里取ret_stack时已经从ops->address返回了
+//（分别从__save_stack_address、和save_stack_address返回），所以下面两项已经
+//不在栈上了，栈上应该有一个print_ftrace_graph_addr的返回地址，也在print_context_stack
+//上。
+//注意，虽然print_ftrace_graph_addr里也会对ops->address进行调用，会压入新的return_to_handler和
+ret_stack，但是取到的地址却是print_ftrace_graph_addr没错（用来和下面的return_to_handler对应 ），
+所以下面的情景应该是在__save_stack_address中的，对print_ftrace_graph_addr中情况的模拟。
+return_to_handler                   save_stack_address+0x1f/0x30        
+return_to_handler                   print_context_stack+0x9f/0xd0       
+
+return_to_handler                   print_context_stack+0xc6/0xd0(ret addr of print_ftrace_graph_addr)     
+return_to_handler                   dump_trace+0xb5/0x1b0               
+return_to_handler                   save_stack_trace+0x30/0x50          print_context_stack+0xc6/0xd0
+return_to_handler                   stack_trace_call+0x119/0x340        dump_trace+0xb5/0x1b0
+ftrace_ops_listfunc+0xe6/0x100
+ftrace_call+0x5/0xb
+                                                                        save_stack_trace+0x30/0x50
+
+所以__save_stack_address里skip掉3项(return_to_handler,print_context_stack,return_to_handler)，得到的stack_trace应该是：
+... ...
+dump_trace+0xb5/0x1b0
+ftrace_ops_listfunc+0xe6/0x100
+ftrace_call+0x5/0xb
+save_stack_trace+0x30/0x50
+... ...
+stack_trace_call+0x119/0x340
+
+
+解决问题，在最终的打印函数里在栈上统计距离dump位置有多少return_to_handler，然后在ret_stack上去掉相应的项。
+或者对trace函数所在的文件都去掉-pg选项。
+========================================================================================================

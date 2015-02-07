@@ -1,0 +1,42 @@
+ARRAY_SIZE宏定义如下：
+头文件：#include <linux/kernel.h>
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]) + __must_be_array(arr))
+作用：计算arr数组有多少个元素。
+
+1、__must_be_array宏定义如下：
+头文件：#include <linux/compiler-gcc.h>
+#ifdef __CHECKER__
+#define __must_be_array(arr) 0
+#else
+/* &a[0] degrades to a pointer: a different type from an array */
+#define __must_be_array(a) BUILD_BUG_ON_ZERO(__same_type((a), &(a)[0]))
+#endif
+作用：避免ARRAY_SIZE宏被误用，因为a是一个指针，而不是数组。
+ 
+2、__same_type宏定义如下：
+头文件：#include <linux/compiler.h>
+#ifndef __same_type
+# define __same_type(a, b) __builtin_types_compatible_p(typeof(a), typeof(b))
+#endif
+作用：__builtin_types_compatible_p是gcc内嵌函数用于判断一个变量的类型是否为某指定的类型，假如是就返回1，否则返回0。
+ 
+3、BUILD_BUG_ON_ZERO宏定义如下：
+头文件：#include <linux/kernel.h>
+#define BUILD_BUG_ON_ZERO(e) (sizeof(struct { int:-!!(e); }))
+作用：当__same_type返回0时，BUILD_BUG_ON_ZERO得到0，当返回1时，BUILD_BUG_ON_ZERO将会出现语法错误（因为struct{-1}）。
+
+参考：
+http://www.mid520.com/wenzhang/linux/201307/00000032.html
+http://stackoverflow.com/questions/9229601/what-is-in-c-code
+
+        也就是说，宏ARRAY_SIZE不仅能计算数组元素个数，还能验证传递进来的参数确实为数组。
+使用
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]) + __must_be_array(arr))
+而不使用
+#define ARRAY_SIZE(arr)   sizeof(arr) / sizeof((arr)[0])   \
+                                                   __must_be_array(arr))
+或
+#define ARRAY_SIZE(arr)   do{ sizeof(arr) / sizeof((arr)[0]) + __must_be_array(arr)} while (0)
+的原因是ARRAY_SIZE可能被用在for的初始化或条件里，不允许上面的两种语句出现，如
+ block/genhd.c：
+ for (index = ARRAY_SIZE(major_names)-1; index > 0; index--) {

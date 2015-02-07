@@ -1,0 +1,42 @@
+内核线程用来在后台做一些操作。
+内核线程没有用户空间，即task_struct结构中mm指针为NULL。
+
+内核线程只能由其它内核线程创建，即由其它内核线程fork出来，具体fork参数为：
+kernel/fork.c:
+pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
+{
+ return do_fork(flags|CLONE_VM|CLONE_UNTRACED, (unsigned long)fn,
+ (unsigned long)arg, NULL, NULL);
+}
+
+内核线程在kernel/kthread.c中实现，接口在<linux/kthread.h>:
+主要接口有：
+kthread_create
+kthread_run
+kthread_bind
+kthread_stop
+kthread_should_stop
+kthread_should_park
+
+kthread_park
+kthread_unpark
+kthread_parkme
+
+创建：
+内核线程实际的创建是由pid为2的内核线程kthreadd完成的:
+kthread_create()-->kthread_create_on_node-->分配kthread_create_info 并挂入kthread_create_list，唤醒kthreadd-->
+create_kthread-->kernel_thread(kthread, create, CLONE_FS | CLONE_FILES | SIGCHLD);
+kthread()就是内核函数入口，这里先是通过 __set_current_state(TASK_UNINTERRUPTIBLE);睡眠，
+等待线程创建者调用wake_up_process()唤醒。
+
+停止：
+通过kthread_stop设置KTHREAD_SHOULD_STOP标志，通过 wake_up_process(k);唤醒目标内核线程-->目标线程被唤醒后，
+检查kthread_should_stop，然后做一些清理工作，然后退出。
+
+PARK:
+调用kthread_park设置KTHREAD_SHOULD_PARK标志，通过 wake_up_process(k);唤醒目标内核线程-->目标线程被唤醒后，
+检查kthread_should_park，然后调用 kthread_parkme()睡眠，进入park状态。
+
+UNPARK:
+通过调用kthread_unpark清理KTHREAD_SHOULD_PARK，通过wake_up_process唤醒目标线程-->目标线程被唤醒，
+从kthread_parkme()返回。

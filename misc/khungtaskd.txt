@@ -1,0 +1,11 @@
+与watchdogd不同，khungtaskd是用来检测系统中的僵尸进程也就是处于
+TASK_UNINTERRUPTIBLE状态并且120s没有得到调度。
+
+内核线程khungtaskd平时在线程watchdog中通过schedule_timeout_interruptible睡眠，
+每隔120s会唤醒一次并通过check_hung_uninterruptible_tasks检查系统中所有进程，
+对于处于TASK_UNINTERRUPTIBLE状态的进程，check_hung_task会判断其上下文切换数
+switch_count是否等于t->last_switch_count，如果不等则说明在过去120s内此进程得到了切换，
+此时更新t->last_switch_count，并return。
+
+否则说明此进程在过去120s内没有得到切换，打印"INFO: task %s:%d blocked for more than "消息。
+注意这里只是打印消息，至于进程回收，则还是由其父进程来完成。

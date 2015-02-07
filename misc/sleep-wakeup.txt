@@ -1,0 +1,57 @@
+LKD中进入睡眠的代码
+===================
+add_wait_queue(q, &wait);
+while (!condition) {        /* condition is the event that we are waiting for */
+    prepare_to_wait(&q, &wait, TASK_INTERRUPTIBLE);
+    if(condition)
+            break;
+    if (signal_pending(current))
+            /* handle signal */
+    schedule();
+}
+finish_wait(&q, &wait);
+这里prepare_to_wait之后的判断防的是while(!condition)之后，prepare_to_wait之前condition条件发生变成，condition成立的情况，因为在prepare_to_wait这前还没有加入等待队列，不会因条件成熟而被唤醒。
+而从prepare_to_wait到schedule();让出cpu之前的这段时间并不需要防，因为已经加入等待队列，这段时间即使条件成立，会被唤醒，schedule()不会让出cpu。
+
+ldd3中scull_p_read()中的例子：
+static ssize_t scull_p_read (struct file *filp, char __user *buf, size_t count,
+                loff_t *f_pos)
+{
+    if (down_interruptible(&dev->sem))
+        return -ERESTARTSYS;
+
+     while (dev->rp == dev->wp) { /* nothing to read */
+          up(&dev->sem); /* release the lock */
+          if (filp->f_flags & O_NONBLOCK)
+                    return -EAGAIN;
+          PDEBUG("\"%s\" reading: going to sleep\n", current->comm);
+          if (wait_event_interruptible(dev->inq, (dev->rp != dev->wp)))
+                    return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+         /* otherwise loop, but first reacquire the lock */
+         if (down_interruptible(&dev->sem))
+                    return -ERESTARTSYS;
+}
+
+#define __wait_event_interruptible(wq, condition, ret) \
+do { \
+ DEFINE_WAIT(__wait); \
+ \
+ for (;;) { \
+ prepare_to_wait(&wq, &__wait, TASK_INTERRUPTIBLE); \
+ if (condition) \
+ break; \
+ if (!signal_pending(current)) { \
+ schedule(); \
+ continue; \
+ } \
+ ret = -ERESTARTSYS; \
+ break; \
+ } \
+ finish_wait(&wq, &__wait); \
+} while (0)
+
+这里有两点需要注意，一是prepare_to_wait之后要判断，二是schedule之后要加锁
+
+当然像上面inotify中的例子开始不判断， prepare_to_wait之后再判断也是可以的。
+
+见‘mempool中的睡眠与唤醒’

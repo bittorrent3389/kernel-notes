@@ -1,0 +1,96 @@
+Linux-3.8.8中pci的初始化与2.4内核中pci的初始化大致过程是相似的：
+
+arch/x86/pci/legacy.c
+int __init pci_subsys_init(void)
+{
+ /*
+  * The init function returns an non zero value when
+  * pci_legacy_init should be invoked.
+  */
+ if (x86_init.pci.init())
+ pci_legacy_init();
+
+ pcibios_fixup_peer_bridges();
+ x86_init.pci.init_irq();
+ //2.4内核里，主要操作都放在pcibios_init()里，现在，这里只做一部分工作，如pcibios_resource_survey
+pcibios_init();
+ return 0;
+}
+
+arch/x86/kernel/x86_init.c
+ .init = x86_default_pci_init,
+
+arch/x86/include/asm/pci_x86.h
+#ifdef CONFIG_PCI
+# ifdef CONFIG_ACPI
+#  define x86_default_pci_init pci_acpi_init
+# else
+#  define x86_default_pci_init pci_legacy_init
+# endif
+# define x86_default_pci_init_irq pcibios_irq_init
+# define x86_default_pci_fixup_irqs pcibios_fixup_irqs
+#else
+# define x86_default_pci_init NULL
+# define x86_default_pci_init_irq NULL
+# define x86_default_pci_fixup_irqs NULL
+#endif
+arch/x86/pci/legacy.c
+pci_legacy_init()-->pcibios_scan_root(0)
+arch/x86/pci/numaq_32.c
+pci_numaq_init()-->pcibios_scan_root(0)
+arch/x86/pci/common.c
+pcibios_scan_root(0)-->pci_scan_bus_on_node()-->pci_scan_root_bus()
+drivers/pci/probe.c
+drivers/pci/bus.c
+pci_scan_root_bus()
+     |_pci_create_root_bus()
+     |_pci_scan_child_bus()
+     |_pci_bus_add_devices()-->pci_bus_add_device()-->device_add()
+
+pci_scan_child_bus()
+     |_pci_scan_slot() --> pci_scan_single_device()
+     |                                        |_pci_scan_device()-->alloc_pci_dev/pci_setup_device
+     |                                        |_pci_device_add()
+     |                                               |_device_initialize()
+     |                                               |_list_add_tail(&dev->bus_list, &bus->devices);
+     |_pci_scan_bridge()-->pci_scan_child_bus() 
+
+
+pci_scan_slot()扫描一个插槽(slot)，pci_scan_single_device()扫描一个逻辑设备(一个function)，
+
+pci_scan_device()通过alloc_pci_dev/pci_setup_device分配一个pci_dev结构并从设备读取相应信息。
+
+pci_scan_child_bus()会递归扫描所有pci总线。
+
+pci_device_add()则把pci_dev结构加入bus->devices队列。
+此外，pci_device_add()还会做另一件事，就是调用device_initialize()初始化struct pci_dev里面的struct device结构。这是向设备模型注册一个device的第一步。
+
+之后，在扫描完所有总线和设备后pci_scan_root_bus()，通过调用pci_bus_add_devices()-->pci_bus_add_device()-->device_add()完成第二步，将所有pci设备加入系统设备模型。
+
+注：ldd3中393页说将pci设备加入设备模型中是通过device_register()来完成的，但这里可以看出当前的内核是通过两步来完成的。
+
+参考：
+drivers/base/core.c
+/**
+ * device_register - register a device with the system.
+ * @dev: pointer to the device structure
+ *
+ * This happens in two clean steps - initialize the device
+ * and add it to the system. The two steps can be called
+ * separately, but this is the easiest and most common.
+ * I.e. you should only call the two helpers separately if
+ * have a clearly defined need to use and refcount the device
+ * before it is added to the hierarchy.
+ *
+ * For more information, see the kerneldoc for device_initialize()
+ * and device_add().
+ *
+ * NOTE: _Never_ directly free @dev after calling this function, even
+ * if it returned an error! Always use put_device() to give up the
+ * reference initialized in this function instead.
+ */
+int device_register(struct device *dev)
+{
+ device_initialize(dev);
+ return device_add(dev);
+}

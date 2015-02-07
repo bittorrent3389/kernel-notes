@@ -1,0 +1,28 @@
+kernel/module.c
+
+sys_init_module()-->
+load_module()-->layout_and_allocate()-->setup_load_info()-->check_modstruct_version()
+--> check_version(sechdrs, versindex, VMLINUX_SYMBOL_STR(module_layout), mod, crc, NULL);
+通过module_layout，检查模块中模块相关数据结构的版本是否内核中一致，即module struct version：
+#ifdef CONFIG_MODVERSIONS
+/* Generate the signature for all relevant module structures here.
+ * If these change, we don't want to try to parse the module. */
+void module_layout(struct module *mod,
+    struct modversion_info *ver,
+    struct kernel_param *kp,
+    struct kernel_symbol *ks,
+    struct tracepoint * const *tp)
+{
+}
+EXPORT_SYMBOL(module_layout);
+#endif
+
+
+sys_init_module()-->
+load_module()-->layout_and_allocate()-->check_modinfo()
+通过check_modinfo()检查模块的vermagic与内核的vermagic是否一致。
+
+
+sys_init_module()-->
+load_module()-->simplify_symbols()-->resolve_symbol_wait()-->resolve_symbol()-->check_version()
+检查模块所使用的内核中的符号版本（模块中__versions段里符号的crc值）是否与内核中的一致，也就是module.mod.c里数据结构static const struct modversion_info ____versions[]中的crc是否与内核中的一致。

@@ -1,0 +1,93 @@
+init/main.c
+start_kernel-->init_IRQ()
+
+arch/x86/kernel/irqinit.c
+init_IRQ()--> x86_init.irqs.intr_init();
+
+struct x86_init_ops x86_init __initdata = {
+     ... ...
+     .irqs = {
+     .pre_vector_init = init_ISA_irqs,
+     .intr_init = native_init_IRQ,
+     .trap_init = x86_init_noop,
+     },
+    ... ...
+};
+
+arch/x86/kernel/irqinit.c
+void __init native_init_IRQ(void)
+{
+      ... ...
+       apic_intr_init();
+
+      /*
+       * Cover the whole vector space, no vector can escape
+       * us. (some of these will be overridden and become
+       * 'special' SMP interrupts)
+       */
+      i = FIRST_EXTERNAL_VECTOR;
+      for_each_clear_bit_from(i, used_vectors, NR_VECTORS) {
+      /* IA32_SYSCALL_VECTOR could be used in trap_init already. */
+      set_intr_gate(i, interrupt[i - FIRST_EXTERNAL_VECTOR]);
+      }
+
+
+     if (!acpi_ioapic && !of_ioapic)
+     setup_irq(2, &irq2);
+     ... ...
+}
+
+      这里interrupt[]是一个函数指针数组，保存着各个interrupt vector的处理函数。这些函数称为stub(就是2.4内核中的IRQ0x**_interrupt()，见《情景分析3.2节，中断向量表IDT的初始化》)，作用是获取相应的vector号并压入栈中，调用entry_32.S中的common_interrupt，进而调用do_IRQ()。数组interrupt和这些stub也是在文件entry_32.S中定义的： 
+
+/*
+ * Build the entry stubs and pointer table with some assembler magic.
+ * We pack 7 stubs into a single 32-byte chunk, which will fit in a
+ * single cache line on all modern x86 implementations.
+ */
+.section .init.rodata,"a"
+ENTRY(interrupt)
+.section .entry.text, "ax"
+ .p2align 5
+ .p2align CONFIG_X86_L1_CACHE_SHIFT
+ENTRY(irq_entries_start)
+ RING0_INT_FRAME
+vector=FIRST_EXTERNAL_VECTOR
+.rept (NR_VECTORS-FIRST_EXTERNAL_VECTOR+6)/7
+ .balign 32
+  .rept 7
+    .if vector < NR_VECTORS
+      .if vector <> FIRST_EXTERNAL_VECTOR
+ CFI_ADJUST_CFA_OFFSET -4
+      .endif
+1: pushl_cfi $(~vector+0x80) /* Note: always in signed byte range */
+      .if ((vector-FIRST_EXTERNAL_VECTOR)%7) <> 6
+ jmp 2f
+      .endif
+      .previous
+ .long 1b
+      .section .entry.text, "ax"
+vector=vector+1
+    .endif
+  .endr
+2: jmp common_interrupt
+.endr
+END(irq_entries_start)
+
+.previous
+END(interrupt)
+
+/*
+ * the CPU automatically disables interrupts when executing an IRQ vector,
+ * so IRQ-flags tracing has to follow that:
+ */
+ .p2align CONFIG_X86_L1_CACHE_SHIFT
+common_interrupt:
+ ASM_CLAC
+ addl $-0x80,(%esp) /* Adjust vector into the [-256,-1] range */
+ SAVE_ALL
+ TRACE_IRQS_OFF
+    //由于do_IRQ没有asmlinkage标志，所以通过寄存器来传递参数，因其只有一个参数struct pt_regs *regs，所以通过%eax来传递栈指针。
+ movl %esp,%eax
+ call do_IRQ  
+ jmp ret_from_intr
+ENDPROC(common_interrupt)

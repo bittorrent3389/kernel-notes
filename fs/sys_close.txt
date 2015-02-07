@@ -1,0 +1,12 @@
+fs/open.c
+sys_close()-->__close_fd()
+fs/file.c
+__close_fd-->filp_close()
+fs/open.c
+filp_close()-->fput()
+fs/file_table.c
+fput()--> init_task_work(&file->f_u.fu_rcuhead, ____fput);
+____fput-->__fput()
+                         |_ file->f_op->release(inode, file);
+                         |_cdev_put(inode->i_cdev);
+                         |_ fops_put(file->f_op);

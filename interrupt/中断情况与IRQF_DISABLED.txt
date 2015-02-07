@@ -1,0 +1,80 @@
+１. 在所有的cpu上，同一个中断通道上的两个中断函数不会同时运行（无论哪个cpu），
+如果正在处理一个中断时另一个此中断通道上的中断发生了（同一cpu或不同cpu），则会在handle_edge_irq()里设置IRQS_PENDING标志位，
+然后跳过handle_irq_event()，之后当前的中断处理返回后检测到IRQS_PENDING，然后继续处理。
+
+2. 在以前的内核中，当处理某个中断时，当前cpu上的其它中断通道的中断是被允许的（从代码上来看，
+进入中断处理后此cpu上的所有中断都应该是被禁止的，然后又通过 local_irq_enable_in_hardirq打开的，见下面的代码）注*，如需关闭当前cpu上的其它中断，则可以在request_irq()时使用IRQF_DISABLED标志。
+
+3. 现在的代码中，处理一个中断时当前cpu的的其它中断默认就是关闭的，所以废除了IRQF_DISABLED标志位，这是由下面的patch开始的。
+
+＊但是在调用local_irq_enable_in_hardirq以前的软件中断处理路径上没有找到相应关闭当前cpu中断的代码，实际上这是发生中断时硬件关闭的。
+见《情景分析》３.4节中断的响应与服务：“当通过中断门进入中断服务时，CPU的中断响应机制就自动被关闭了。”
+
+Ref:
+http://lwn.net/Articles/380931/
+http://lwn.net/Articles/380937/
+
+commit e58aa3d2d0cc01ad8d6f7f640a0670433f794922
+Author: Ingo Molnar <mingo@elte.hu>
+Date:   Fri Mar 26 00:06:51 2010 +0000
+
+
+    genirq: Run irq handlers with interrupts disabled
+    
+    Running interrupt handlers with interrupts enabled can cause stack
+    overflows. That has been observed with multiqueue NICs delivering all
+    their interrupts to a single core. We might band aid that somehow by
+    checking the interrupt stacks, but the real safe fix is to run the irq
+    handlers with interrupts disabled.
+    
+    Drivers for whacky hardware still can reenable them in the handler
+    itself, if the need arises. (They do already due to lockdep)
+    
+    The risk of doing this is rather low:
+    
+     - lockdep already enforces this
+     - CONFIG_NOHZ has shaken out the drivers which relied on jiffies updates
+     - time keeping is not longer sensitive to the timer interrupt being delayed
+    
+    Signed-off-by: Ingo Molnar <mingo@elte.hu>
+    Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+    Cc: Peter Zijlstra <peterz@infradead.org>
+    Cc: Alan Cox <alan@lxorguk.ukuu.org.uk>
+    Cc: Andi Kleen <andi@firstfloor.org>
+    Cc: David Miller <davem@davemloft.net>
+    Cc: Greg Kroah-Hartman <gregkh@suse.de>
+    Cc: Arnaldo Carvalho de Melo <acme@redhat.com>
+    Cc: Linus Torvalds <torvalds@osdl.org>
+    LKML-Reference: <20100326000405.758579387@linutronix.de>
+
+
+diff --git a/kernel/irq/handle.c b/kernel/irq/handle.c
+index 76d5a67..27e5c69 100644
+--- a/kernel/irq/handle.c
++++ b/kernel/irq/handle.c
+--- a/kernel/irq/handle.c
++++ b/kernel/irq/handle.c
+    Cc: Peter Zijlstra <peterz@infradead.org>
+    Cc: Alan Cox <alan@lxorguk.ukuu.org.uk>
+    Cc: Andi Kleen <andi@firstfloor.org>
+    Cc: David Miller <davem@davemloft.net>
+    Cc: Greg Kroah-Hartman <gregkh@suse.de>
+    Cc: Arnaldo Carvalho de Melo <acme@redhat.com>
+    Cc: Linus Torvalds <torvalds@osdl.org>
+    LKML-Reference: <20100326000405.758579387@linutronix.de>
+
+
+diff --git a/kernel/irq/handle.c b/kernel/irq/handle.c
+index 76d5a67..27e5c69 100644
+--- a/kernel/irq/handle.c
++++ b/kernel/irq/handle.c
+@@ -370,9 +370,6 @@ irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
+        irqreturn_t ret, retval = IRQ_NONE;
+        unsigned int status = 0;
+ 
+-       if (!(action->flags & IRQF_DISABLED))
+-               local_irq_enable_in_hardirq();
+-
+        do {
+                trace_irq_handler_entry(irq, action);
+                ret = action->handler(irq, action->dev_id);

@@ -1,0 +1,70 @@
+实现：
+kernel/printk.c
+printk接受可变参数：
+asmlinkage int printk(const char *fmt, ...)
+
+通过调用vprintk_emit来实现：
+
+先通过 text_len = vscnprintf(text, sizeof(textbuf), fmt, args);
+将可变参数格式化输出到text
+
+然后去掉有关loglevel的前缀
+
+判断要输出的字符串有没有换行：
+if (!(lflags & LOG_NEWLINE)) {
+	//如果cont中原来有数据，并且lflags有LOG_PREFIX标志或cont中的数据不是本进程的，先将cont中的数据flush到log_buf。
+	/*
+	 * Flush the conflicting buffer. An earlier newline was missing,
+	 * or another task also prints continuation lines.
+	 */
+	if (cont.len && (lflags & LOG_PREFIX || cont.owner != current))
+		cont_flush(LOG_NEWLINE);
+
+	//如果没有换行字符，尝试将其暂时保存在全局量cont里，等待下面出现换行字符时flush到log_buf里
+	//如果保存失败直接将其保存到log_buf里
+	//如果cont中原来没有数据，cont_add会将本次数据放入，如果cont中原来有本进程的数据，cont_add会将本次数据连接在上次数据后面。
+	/* buffer line if possible, otherwise store it right away */
+	if (!cont_add(facility, level, text, text_len))
+		log_store(facility, level, lflags | LOG_CONT, 0,
+				dict, dictlen, text, text_len);
+} else {
+	bool stored = false;
+
+	//查看cont里有上一条输出，如果其属于当前进程，则通过cont_add合并，再cont_flush到到log_buf里
+	//如果lflags有LOG_PREFIX标志，则把cont中和本次数据分别写入log_buf,也就是说先cont_flush　cont中的数据，再log_store本次数据。
+	/*
+	 * If an earlier newline was missing and it was the same task,
+	 * either merge it with the current buffer and flush, or if
+	 * there was a race with interrupts (prefix == true) then just
+	 * flush it out and store this line separately.
+	 */
+	if (cont.len && cont.owner == current) {
+		if (!(lflags & LOG_PREFIX))
+			stored = cont_add(facility, level, text, text_len);
+		cont_flush(LOG_NEWLINE);
+	}
+
+	//否则直接通过log_store将文本保存到log_buf里。
+	if (!stored)
+		log_store(facility, level, lflags, 0,
+				dict, dictlen, text, text_len);
+}
+
+--------------
+
+log_buf是一个环形buffer，里面的每一条message记录由struct log结构和message内容构成
+第一条记录在缓冲区中的偏移为static u32 log_first_idx;
+可用于存储的下一条记录在缓冲区在的偏移为static u32 log_next_idx;
+
+第一条记录和下一条记录的序号为static u64 log_first_seq;和static u64 log_next_seq;
+只本条件log_first_seq < log_next_seq成立，说明缓冲区中还有记录，在log_store里，通过这个条件，以及
+ log_first_idx = log_next(log_first_idx);
+找到存放本条message的位置。
+----------------
+
+从log_buf中取出数据：
+devkmsg_read，syslog_print等都通过log_from_idx找到相应的log结构，再通过log_text找到其中的message信息，最后返回给用户空间。
+
+----------------
+console_unlock：
+会通过console_cont_flush将cont里的数据读出来，写到console，也会通过log_from_idx将log_buf里的数据写到console。

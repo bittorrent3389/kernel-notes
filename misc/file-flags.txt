@@ -1,0 +1,83 @@
+file->f_mode, file->f_flags 和sys_open的参数mode
+================================================
+
+f_flags是打开文件过程中模式的请求，用于
+１）打开过程中打开权限的判断：
+build_open_flags中设置op->acc_mode;
+      sys_open()->do_sys_open()->do_filp_open()->path_openat()->do_last()中判断是否有权限打开：
+error = may_open(&nd->path, acc_mode, open_flag);（fs/name.c中的may_xxx都调用inode_permission来检查权限）。
+２）和针对特定打开模式执行特殊操作（见ldd3中的59页的scull_open的例子）。
+
+而f_mode则是文件打开后的状态（模式），用于文件打开后，访问文件时的模式判断。
+见fs/read_write.c中的vfs_read(),vfs_write()，vfs_llseek等。
+
+－－－
+
+f_flags:
+sys_open()->do_sys_open()->do_filp_open()->path_openat():
+    file->f_flags = op->open_flag;
+f_flags即是sys_open界面上传进来的参数flags，定义于include/uapi/asm-generic/fcntl.h
+
+#define O_ACCMODE 00000003
+#define O_RDONLY 00000000
+#define O_WRONLY 00000001
+#define O_RDWR 00000002
+... ...
+
+f_mode:
+sys_open()->do_sys_open()->do_filp_open()->path_openat()->do_last()->finish_open()->finish_open()->do_dentry_open():
+    f->f_mode = OPEN_FMODE(f->f_flags) | FMODE_LSEEK |FMODE_PREAD | FMODE_PWRITE;
+f_mode是f_flags经过((flag + 1) & O_ACCMODE) 变换手得到的值,f_mode与f_flags使用不同的convention，所以要先加１变换，然后用O_ACCMODE过滤掉f_flags中一些与读写模式无关的标志位：
+#define OPEN_FMODE(flag) ((__force fmode_t)(((flag + 1) & O_ACCMODE) | \
+     (flag & __FMODE_NONOTIFY)))
+f_mode的值定义在include/linux/fs.h中：
+/*
+ * flags in file.f_mode.  Note that FMODE_READ and FMODE_WRITE must correspond
+ * to O_WRONLY and O_RDWR via the strange trick in __dentry_open()
+ */
+/* file is open for reading */
+#define FMODE_READ ((__force fmode_t)0x1)
+/* file is open for writing */
+#define FMODE_WRITE ((__force fmode_t)0x2)
+/* file is seekable */
+#define FMODE_LSEEK ((__force fmode_t)0x4)
+... ...
+
+LDD3 53页中：
+mode_t  f_mode;
+The file mode identifies the file as either readable or writable (or both), by means
+of the bits FMODE_READ and FMODE_WRITE . You might want to check this field for
+read/write permission in your open or ioctl function, but you don’t need to check
+permissions for read and write, because the kernel checks before invoking your
+method. An attempt to read or write when the file has not been opened for that
+type of access is rejected without the driver even knowing about it.
+       这里的意思是在驱动的open函数里可以通过判断f_mode来判断文件的读写权限，因为对驱动的open函数f_op->open的调用是在do_dentry_open(fs/open.c)里对f_mode赋值之后进行的。当然，因为f_flags与f_mode是对应关系，所以在驱动的open函数里判断f_flags也是可以的，就像ldd3 59面scull_open里做的那样。
+
+sys_open的参数mode:
+这个参数的作用是当目标文件不存在并要求创建时，新建文件的权限：
+sys_open()->do_sys_open()->do_filp_open()->path_openat()->do_last()->lookup_open()->vfs_create()
+
+static inline int build_open_flags(int flags, umode_t mode, struct open_flags *op)
+{
+     if (flags & O_CREAT)
+         op->mode = (mode & S_IALLUGO) | S_IFREG;
+     else
+         op->mode = 0;
+}
+
+umode_t mode = op->mode;
+
+error = vfs_create(dir->d_inode, dentry, mode,nd->flags & LOOKUP_EXCL);
+以ext4为例，后面mode会传给inode: inode->i_mode = mode;
+和ext4_inode_info->i_flags：
+ ei->i_flags =
+ ext4_mask_flags(mode, EXT4_I(dir)->i_flags & EXT4_FL_INHERITED);
+
+
+mode的值定义于：include/linux/stat.h
+
+#define S_IRWXUGO (S_IRWXU|S_IRWXG|S_IRWXO)
+#define S_IALLUGO (S_ISUID|S_ISGID|S_ISVTX|S_IRWXUGO)
+#define S_IRUGO (S_IRUSR|S_IRGRP|S_IROTH)
+#define S_IWUGO (S_IWUSR|S_IWGRP|S_IWOTH)
+#define S_IXUGO (S_IXUSR|S_IXGRP|S_IXOTH)

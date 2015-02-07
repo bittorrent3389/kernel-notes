@@ -1,0 +1,28 @@
+nouveau ddx:
+nouveauSetup
+	|_xf86AddDriver(&NV, module, 1);
+
+
+_X_EXPORT DriverRec NV = {
+	nouveau_device_match,
+	NVPciProbe,
+#ifdef XSERVER_PLATFORM_BUS
+	NVPlatformProbe,
+#endif
+};
+
+NVPciProbe	(nouveau ddx)
+	|_xf86ConfigPciEntity	(xorg)
+		|_xf86AllocateScreen	(xorg)(fill xf86Screens)
+	|_NVInitScrn
+		pScrn->EnterVT          = NVEnterVT;
+		pScrn->LeaveVT          = NVLeaveVT;
+
+xserver/hw/xfree86/common/xf86Events.c
+xf86VTSwitch
+	|_xf86VTLeave
+	|_xf86VTEnter
+		|_xf86Screens[i]->EnterVT(xf86Screens[i]))
+		  NVEnterVT	(nouveau ddx)
+		  	|_drmSetMaster	(libdrm)
+				|_ioctl(fd, DRM_IOCTL_SET_MASTER, 0);

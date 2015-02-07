@@ -1,0 +1,20 @@
+1. in
+linux	/boot/vmlinuz-3.13.0-27-generic root=UUID=de9ee622-1eb5-4aaf-9415-dba9ee389a3a ro locale=zh_CN quiet splash $vt_handoff ftrace_filter=nouveau_devobj_ctor ftrace=function trace_options=func_stack_trace
+
+ftrace_filter=
+can't set a function in a external module
+
+------
+kfree is ok, but trace_options=func_stack_trace doesn't work
+
+	#linux	/boot/vmlinuz-3.13.0-27-generic root=UUID=de9ee622-1eb5-4aaf-9415-dba9ee389a3a ro locale=zh_CN quiet splash $vt_handoff ftrace_filter=kfree ftrace=function trace_options=func_stack_trace
+
+appears in trace_options as nofunc_stack_trace
+but not in options/
+------
+
+
+2.trace_options=func_stack_trace
+doesn't work
+
+

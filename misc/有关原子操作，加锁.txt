@@ -1,0 +1,46 @@
+常见的需要加锁的一种情况是条件的判断与操作的原子化，即只有条件成立的情况下才能进行操作，
+判断与操作两个步骤需要是原子的，如ldd3中的例子：
+
+static ssize_t scull_p_read (struct file *filp, char __user *buf, size_t count,
+		loff_t *f_pos)
+{
+	struct scull_pipe *dev = filp->private_data;
+
+	if (down_interruptible(&dev->sem))
+		return -ERESTARTSYS;
+
+	PDEBUG("\"%s\" in %s\n", current->comm, __func__);
+	while (dev->rp == dev->wp) { /* nothing to read */
+		up(&dev->sem); /* release the lock */
+		if (filp->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+		PDEBUG("\"%s\" reading: going to sleep\n", current->comm);
+		if (wait_event_interruptible(dev->inq, (dev->rp != dev->wp)))
+			return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+		/* otherwise loop, but first reacquire the lock */
+		if (down_interruptible(&dev->sem))
+			return -ERESTARTSYS;
+	}
+	/* ok, data is there, return something */
+	if (dev->wp > dev->rp)
+		count = min(count, (size_t)(dev->wp - dev->rp));
+	else /* the write pointer has wrapped, return data up to dev->end */
+		count = min(count, (size_t)(dev->end - dev->rp));
+	if (copy_to_user(buf, dev->rp, count)) {
+		up (&dev->sem);
+		return -EFAULT;
+	}
+	dev->rp += count;
+	if (dev->rp == dev->end)
+		dev->rp = dev->buffer; /* wrapped */
+	up (&dev->sem);
+
+	/* finally, awake any writers and return */
+	wake_up_interruptible(&dev->outq);
+	PDEBUG("\"%s\" did read %li bytes\n",current->comm, (long)count);
+	return count;
+}
+
+在while循环中被唤醒后进行下一次判断前，要通过 if (down_interruptible(&dev->sem))加锁。
+如果加锁成功，条件不成立则释放锁后睡眠。
+如果加锁成功，条件成立则带着锁进行后面的操作。

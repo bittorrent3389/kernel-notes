@@ -1,0 +1,215 @@
+    kernel/trace/trace_stack.c里的stack_trace_call的调用流程为：
+
+bar()
+    |
+    |
+ftrace_caller()                                 arch/x86/kernel/entry_32.S
+    |
+    |
+stack_trace_call()    (ftrace_call)             kernel/trace/trace_stack.c
+    |
+    |
+check_stack()
+    |
+    |
+save_stack_trace()                              arch/x86/kernel/stacktrace.c
+    |
+    |
+dump_trace()                                    arch/x86/kernel/dumpstack_32.c
+    |
+    |
+print_context_stack()     (ops->walk_stack)     arch/x86/kernel/dumpstack.c
+    |
+    |  //trace->entries[trace->nr_entries++] = addr;
+    |__save_stack_address()      (ops->address)        arch/x86/kernel/stacktrace.c
+    |
+    |__print_ftrace_graph_addr()
+
+    通过在__save_stack_address()里添加如下dump_stack代码：
+    if (trace->skip == 3) {
+        printk("===============DUMP STACK BEGIN==============\n");
+        printk("When trace->skip=3, addr=%ul\n", addr);
+        dump_stack();
+        printk("================DUMP STACK END===============\n");
+    }
+    得到如下的栈信息：
+
+==============DUMP STACK BEGIN================
+When trace->skip=3, addr=-1056907296
+Call Trace:
+ [<c144f808>] dump_stack+0x48/0x69
+ [<c100e0e2>] __save_stack_address+0x92/0xb0
+ [<c100dfe0>] ? save_stack_trace+0x30/0x50
+ [<c100dfe0>] ? save_stack_trace+0x30/0x50
+ [<c100e11f>] save_stack_address+0x1f/0x30
+ [<c1005b98>] print_context_stack+0xa8/0xe0
+ [<c1004cc9>] ? dump_trace+0x9/0x100
+ [<c100dfe0>] ? save_stack_trace+0x30/0x50
+ [<c1004d57>] dump_trace+0x97/0x100
+ //wjx:第一个找到的是dump_trace的返回地址,即save_stack_trace+0x30/0x50
+ [<c100dfe0>] save_stack_trace+0x30/0x50
+ [<c10e2e90>] stack_trace_call+0x120/0x290
+ [<c1099634>] ? __rcu_read_unlock+0x4/0x60
+ [<c1099443>] ? __rcu_read_lock+0x3/0x20
+
+ //wjx:地址'ftrace_call+0x5/0xb' 是可信的, 因为在ftrace_call处调用的stack_trace_call是一个
+ //正常函数并且其设置好了%ebp
+ //stack_trace_call由ftrace_update_ftrace_func通过修改位置ftrace_call而成（见ftrace-design.txt），
+ //call指令共5个字节，所以下面显示的ftrace_call+0x5正好是stack_trace_call在ftrace_call中的返回地址。
+ //这个地址是何时放到栈上去的？答：call指令会自动压入。
+ [<c145c1df>] ftrace_call+0x5/0xb
+
+ //wjx:__rcu_read_unlock前面会有'?'，表示这个地址不可信，因为ftrace_caller并没有使用桢指针%ebp,所以其返回地址
+ //（原mcount的返回地址）__rcu_read_unlock+0x9/0x60就是不可信的
+ [<c1099639>] ? __rcu_read_unlock+0x9/0x60
+
+ //wjx:This cpuacct_charge+0x4b/0x60(return address of __rcu_read_unlock) 
+ //is calculated from the %ebp of __rcu_read_unlock
+ [<c108556b>] cpuacct_charge+0x4b/0x60
+ [<c1076fab>] update_curr+0x13b/0x210
+ [<c1078e39>] ? enqueue_entity+0x9/0xcc0
+ [<c1078e68>] enqueue_entity+0x38/0xcc0
+... ...
+ [<c145bbf7>] ret_from_kernel_thread+0x1b/0x28
+ [<c1062a60>] ? kthread_create_on_node+0x110/0x110
+===============DUMP STACK END================
+
+    print_context_stack()对栈的遍历是从参数stack开始向上遍历的，而stack指向的是dump_trace()里的栈上的局部变量dummy的
+地址所以第一个搜索到的地址是dump_trace()在save_stack_trace里的返回地址，即[<c100dfe0>] save_stack_trace+0x30/0x50。
+    因为在__save_stack_address()里会跳过三个可信的返回地址(即跳过tracer函数)，所以最终得到了__rcu_read_unlock的
+返回地址cpuacct_charge+0x4b/0x60并保存到了stack_dump_trace[1]里。
+    对于没有使用fentry的情况，见kernel/trace/trace_stack.c的stack_trace_call，通过 ip += MCOUNT_INSN_SIZE;算得
+mcount(ftrace_caller)的返回地址，即__rcu_read_unlock+0x9/0x60，在check_stack里将其写入stack_dump_trace[0]，这样
+在stack_dump_trace里就得到了__rcu_read_unlock开始的完整的栈。
+    对于使用fentry的情况， 因为在__rcu_read_unlock的一开始没设置好frame时就调用了ftrace_caller，所以__rcu_read_unlock
+的返回地址cpuacct_charge+0x4b/0x60也是不可信的因而也会被跳过，所以被写入到stack_dump_trace[1]处的是update_curr+0x13b/0x210，此时在stack_trace_call里ip被设置成了parent_ip，即cpuacct_charge+0x4b/0x60。所以最终stack_dump_trace里保存的是
+cpuacct_charge+0x4b/0x60开始的栈。由于__rcu_read_unlock()一开始就调用了ftrace_caller，所以其使用的栈可以忽略不计，
+只有一个返回地址。
+
+
+    Ref:stack_trace得到的stack trace:
+
+        Depth    Size   Location    (56 entries)
+        -----    ----   --------
+  0)     2804      12   __rcu_read_unlock+0x9/0x60
+  1)     2792      24   cpuacct_charge+0x4b/0x60
+  2)     2768      68   update_curr+0x13b/0x210
+  3)     2700      88   enqueue_entity+0x38/0xcc0
+  4)     2612      80   enqueue_task_fair+0x47/0x6a0
+  5)     2532      28   enqueue_task+0x45/0x70
+  6)     2504      12   activate_task+0x22/0x30
+  7)     2492      16   ttwu_do_activate.constprop.81+0x2c/0x60
+  8)     2476      44   try_to_wake_up+0x128/0x240
+  9)     2432       8   default_wake_function+0x10/0x20
+ 10)     2424      36   __wake_up_common+0x47/0x70
+ 11)     2388      16   __wake_up_locked+0x1f/0x30
+ 12)     2372      20   ep_poll_callback+0x7e/0x110
+ 13)     2352      36   __wake_up_common+0x47/0x70
+ 14)     2316      32   __wake_up+0x36/0x50
+ 15)     2284      20   wake_up_klogd_work_func+0x44/0x70
+ 16)     2264      24   __irq_work_run+0x5a/0x80
+ 17)     2240       8   irq_work_run+0x15/0x30
+ 18)     2232      20   update_process_times+0x4e/0x60
+ 19)     2212      16   tick_sched_handle.isra.12+0x26/0x60
+ 20)     2196      32   tick_sched_timer+0x37/0x70
+ 21)     2164      48   __run_hrtimer+0x6f/0x210
+ 22)     2116      92   hrtimer_interrupt+0x1f5/0x2b0
+ 23)     2024      20   local_apic_timer_interrupt+0x2f/0x60
+ 24)     2004      12   smp_apic_timer_interrupt+0x33/0x50
+ 25)     1992      68   apic_timer_interrupt+0x34/0x3c
+ 26)     1924      24   finish_task_switch+0x41/0xc0
+ 27)     1900     124   __schedule+0x34a/0x770
+ 28)     1776      12   preempt_schedule+0x35/0x50
+ 29)     1764      40   ___preempt_schedule+0xc/0x14
+ 30)     1724      24   ata_scsi_queuecmd+0x95/0x250 [libata]
+ 31)     1700      24   scsi_dispatch_cmd+0x76/0x1e0 [scsi_mod]
+ 32)     1676      64   scsi_request_fn+0x276/0x410 [scsi_mod]
+ 33)     1612      12   __blk_run_queue+0x2e/0x40
+ 34)     1600      36   queue_unplugged+0x28/0xb0
+ 35)     1564      44   blk_flush_plug_list+0x18e/0x1c0
+ 36)     1520      24   io_schedule_timeout+0x6b/0xd0
+ 37)     1496      44   wait_for_common_io.constprop.1+0x7b/0xe0
+ 38)     1452       8   wait_for_completion_io+0x12/0x20
+ 39)     1444      72   __blkdev_issue_zeroout+0x127/0x150
+ 40)     1372      76   blkdev_issue_zeroout+0xc7/0xd0
+ 41)     1296      32   ext4_ext_zeroout.isra.26+0x6d/0x80 [ext4]
+ 42)     1264     224   ext4_ext_map_blocks+0x1171/0x1bd0 [ext4]
+ 43)     1040     104   ext4_map_blocks+0x2c5/0x520 [ext4]
+ 44)      936     168   mpage_map_and_submit_extent+0xa5/0x780 [ext4]
+ 45)      768     184   ext4_writepages+0x4e8/0x6c0 [ext4]
+ 46)      584       8   do_writepages+0x1a/0x40
+ 47)      576      40   __writeback_single_inode+0x3c/0x280
+ 48)      536      84   writeback_sb_inodes+0x1bd/0x300
+ 49)      452      36   __writeback_inodes_wb+0x7c/0xb0
+ 50)      416      68   wb_writeback+0x222/0x2f0
+ 51)      348     104   bdi_writeback_workfn+0x271/0x3e0
+ 52)      244      56   process_one_work+0x107/0x370
+ 53)      188      44   worker_thread+0x101/0x340
+ 54)      144      64   kthread+0xa1/0xc0
+ 55)       80      80   ret_from_kernel_thread+0x1b/0x28
+
+    在check_stack()里通过以下代码dump stack_dump_trace:
+	printk("---------END OF check_stack------------\n");
+	for(i = 0; i < max_stack_trace.nr_entries; i++) {
+		printk("%d - func:%pS - index:%ul\n", 
+			i, stack_dump_trace[i], stack_dump_index[i]);
+	}
+	printk("---------------------------------------\n");
+
+ 0 - func:__rcu_read_unlock+0x9/0x60 - index:2804l
+ 1 - func:cpuacct_charge+0x4b/0x60 - index:2792l
+ 2 - func:update_curr+0x13b/0x210 - index:2768l
+ 3 - func:enqueue_entity+0x38/0xcc0 - index:2700l
+ 4 - func:enqueue_task_fair+0x47/0x6a0 - index:2612l
+ 5 - func:enqueue_task+0x45/0x70 - index:2532l
+ 6 - func:activate_task+0x22/0x30 - index:2504l
+ 7 - func:ttwu_do_activate.constprop.81+0x2c/0x60 - index:2492l
+ 8 - func:try_to_wake_up+0x128/0x240 - index:2476l
+ 9 - func:default_wake_function+0x10/0x20 - index:2432l
+ 10 - func:__wake_up_common+0x47/0x70 - index:2424l
+ 11 - func:__wake_up_locked+0x1f/0x30 - index:2388l
+ 12 - func:ep_poll_callback+0x7e/0x110 - index:2372l
+ 13 - func:__wake_up_common+0x47/0x70 - index:2352l
+ 14 - func:__wake_up+0x36/0x50 - index:2316l
+ 15 - func:wake_up_klogd_work_func+0x44/0x70 - index:2284l
+ 16 - func:__irq_work_run+0x5a/0x80 - index:2264l
+ 17 - func:irq_work_run+0x15/0x30 - index:2240l
+ 18 - func:update_process_times+0x4e/0x60 - index:2232l
+ 19 - func:tick_sched_handle.isra.12+0x26/0x60 - index:2212l
+ 20 - func:tick_sched_timer+0x37/0x70 - index:2196l
+ 21 - func:__run_hrtimer+0x6f/0x210 - index:2164l
+ 22 - func:hrtimer_interrupt+0x1f5/0x2b0 - index:2116l
+ 23 - func:local_apic_timer_interrupt+0x2f/0x60 - index:2024l
+ 24 - func:smp_apic_timer_interrupt+0x33/0x50 - index:2004l
+ 25 - func:apic_timer_interrupt+0x34/0x3c - index:1992l
+ 26 - func:finish_task_switch+0x41/0xc0 - index:1924l
+ 27 - func:__schedule+0x34a/0x770 - index:1900l
+ 28 - func:preempt_schedule+0x35/0x50 - index:1776l
+ 29 - func:___preempt_schedule+0xc/0x14 - index:1764l
+ 30 - func:ata_scsi_queuecmd+0x95/0x250 [libata] - index:1724l
+ 31 - func:scsi_dispatch_cmd+0x76/0x1e0 [scsi_mod] - index:1700l
+ 32 - func:scsi_request_fn+0x276/0x410 [scsi_mod] - index:1676l
+ 33 - func:__blk_run_queue+0x2e/0x40 - index:1612l
+ 34 - func:queue_unplugged+0x28/0xb0 - index:1600l
+ 35 - func:blk_flush_plug_list+0x18e/0x1c0 - index:1564l
+ 36 - func:io_schedule_timeout+0x6b/0xd0 - index:1520l
+ 37 - func:wait_for_common_io.constprop.1+0x7b/0xe0 - index:1496l
+ 38 - func:wait_for_completion_io+0x12/0x20 - index:1452l
+ 39 - func:__blkdev_issue_zeroout+0x127/0x150 - index:1444l
+ 40 - func:blkdev_issue_zeroout+0xc7/0xd0 - index:1372l
+ 41 - func:ext4_ext_zeroout.isra.26+0x6d/0x80 [ext4] - index:1296l
+ 42 - func:ext4_ext_map_blocks+0x1171/0x1bd0 [ext4] - index:1264l
+ 43 - func:ext4_map_blocks+0x2c5/0x520 [ext4] - index:1040l
+ 44 - func:mpage_map_and_submit_extent+0xa5/0x780 [ext4] - index:936l
+ 45 - func:ext4_writepages+0x4e8/0x6c0 [ext4] - index:768l
+ 46 - func:do_writepages+0x1a/0x40 - index:584l
+ 47 - func:__writeback_single_inode+0x3c/0x280 - index:576l
+ 48 - func:writeback_sb_inodes+0x1bd/0x300 - index:536l
+ 49 - func:__writeback_inodes_wb+0x7c/0xb0 - index:452l
+ 50 - func:wb_writeback+0x222/0x2f0 - index:416l
+ 51 - func:bdi_writeback_workfn+0x271/0x3e0 - index:348l
+ 52 - func:process_one_work+0x107/0x370 - index:244l
+ 53 - func:worker_thread+0x101/0x340 - index:188l
+ 54 - func:kthread+0xa1/0xc0 - index:144l
+ 55 - func:ret_from_kernel_thread+0x1b/0x28 - index:80l
+ 56 - func:0xffffffff - index:32l

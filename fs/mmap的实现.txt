@@ -1,0 +1,77 @@
+mmap, munmap - map or unmap files or devices into memory
+c库提供的接口：
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+Ref:
+The mmap() library call is implemented by libc, which converts the offset in bytes to an offset in pages, then calls the mmap_pgoff() system call.
+
+内核实现：
+mm/mmap.c
+mmap_pgoff-->vm_mmap_pgoff
+mmap_pgoff原型：
+SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
+ unsigned long, prot, unsigned long, flags,
+ unsigned long, fd, unsigned long, pgoff)
+系统调用mmap_pgoff的参数中，pgoff是将c库mmap()参数offset转化为以页大小为单位后的值。
+
+mm/util.c
+vm_mmap_pgoff-->do_mmap_pgoff
+mm/mmap.c
+do_mmap_pgoff-->mmap_region()
+			 |_ vma->vm_pgoff = pgoff;
+			 |_vma->vm_file = get_file(file);
+			 |_file->f_op->mmap(file, vma);
+        这里调用设备或普通文件的file_operation中的mmap函数，对于设备映射，要在driver中实现，主要通过调用
+remap_pfn_range等函数来实现。
+        调用f_op->mmap(file, vma);前，vma->vm_pgoff = pgoff;，所以在相应mmap里，vma->pgoff对应着用户空间调用
+mmap()的参数offset（转化成了以页面为单位），所以在ldd3中的例子中(P426)，映射的是offset对应的物理内存：
+static int simple_remap_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+        if (remap_pfn_range(vma, vma->vm_start, vm->vm_pgoff,vma->vm_end - vma->vm_start,vma->vm_page_prot))
+                return -EAGAIN;
+        vma->vm_ops = &simple_remap_vm_ops;
+        simple_vma_open(vma);
+        return 0;
+}
+
+对于普通文件，如ext4文件系统:
+fs/ext4/file.c
+const struct file_operations ext4_file_operations = {
+        ... ...
+         .mmap = ext4_file_mmap,
+        ... ...
+};
+
+static int ext4_file_mmap(struct file *file, struct vm_area_struct *vma)
+{
+         struct address_space *mapping = file->f_mapping;
+
+         if (!mapping->a_ops->readpage)
+                 return -ENOEXEC;
+         file_accessed(file);
+         vma->vm_ops = &ext4_file_vm_ops;
+         return 0;
+}
+这里主要是设置vma的vm_ops为ext4_file_vm_ops
+static const struct vm_operations_struct ext4_file_vm_ops = {
+         .fault = filemap_fault,
+         .page_mkwrite   = ext4_page_mkwrite,
+         .remap_pages = generic_file_remap_pages,
+};
+
+注意１：
+内核里做mmap操作时，是以页为单位的，调用c库函数
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+时即使第二个参数length不是页面大小的整数倍，内核也会按整数个页面来映射，这时因为虚存空间创建，vma已经分配，所以从mmap返回值address开始的n个页面都可以访问页不会出现异常，如ldd3中的例子mapper.c:
+    address=mmap(0, len, PROT_READ, MAP_FILE | MAP_PRIVATE, fileno(f), offset);
+
+    fprintf(stderr, "mapped \"%s\" from %lu (0x%08lx) to %lu (0x%08lx)\n",
+            fname, offset, offset, offset+len, offset+len);
+
+    fwrite(address, 1, len, stdout);
+
+如果传递参数为./mapper /dev/scullp 0 140，实际建立的映射不只是140，是按一个页面来完成的，所以这时即使：
+  fwrite(address, 1, len+10, stdout);
+也能成功读出内容，而不会SIGSEGV。
+
+注意２：
+c库函数mmap最后一个参数offset，即要映射的设备内的偏移一定要求为页面边界，否则返回Invalid argument.

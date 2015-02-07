@@ -1,0 +1,54 @@
+module_init()定义在include/linux/init.h里：
+
+#ifndef MODULE
+/* initcalls are now grouped by functionality into separate 
+ * subsections. Ordering inside the subsections is determined
+ * by link order. 
+ * For backwards compatibility, initcall() puts the call in 
+ * the device init subsection.
+ *
+ * The `id' arg to __define_initcall() is needed so that multiple initcalls
+ * can point at the same handler without causing duplicate-symbol build errors.
+ */
+
+
+#define __define_initcall(fn, id) \
+ static initcall_t __initcall_##fn##id __used \
+ __attribute__((__section__(".initcall" #id ".init"))) = fn
+
+#define device_initcall(fn) __define_initcall(fn, 6)
+
+#define __initcall(fn) device_initcall(fn)
+
+#define module_init(x) __initcall(x);
+
+#else /* MODULE */
+
+/* Each module must use one module_init(). */
+#define module_init(initfn) \
+ static inline initcall_t __inittest(void) \
+ { return initfn; } \
+ int init_module(void) __attribute__((alias(#initfn)));
+
+
+/* This is only required if you want to be unloadable. */
+#define module_exit(exitfn) \
+ static inline exitcall_t __exittest(void) \
+ { return exitfn; } \
+ void cleanup_module(void) __attribute__((alias(#exitfn)));
+
+#endif
+
+也就是说，当驱动不是编成module，而是编进内核时，会在.initcall6.init这个section里创建一个__initcall_##fn##id结构，指向用户提供的初始化函数。
+
+而当驱动编成module时，会为用户提供的初始化函数initfn提供一个别名init_module，所以用
+#readelf -s hello.ko
+可以看到一个init_module函数，安装模块的过程中struct module->init函数指针会指向这个函数。
+
+__init也定义在include/linux/init.h里：
+#define __init __section(.init.text) __cold notrace
+也就是说，声明为__init的函数会被放在.init.text段里，初始化后其内存空间会被释放。
+
+
+参考：
+http://blog.csdn.net/zhandoushi1982/article/details/4927579

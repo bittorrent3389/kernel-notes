@@ -1,0 +1,19 @@
+是分别在设备的成功probe()时（不成功的情况会减小引用计数），和设备remove时：
+
+static int pci_device_probe(struct device * dev)
+{
+... ...
+ pci_dev_get(pci_dev);
+ error = __pci_device_probe(drv, pci_dev);
+ if (error)
+ pci_dev_put(pci_dev);
+... ...
+}
+
+
+static int pci_device_remove(struct device * dev)
+{
+ ... ...
+ pci_dev_put(pci_dev);
+ return 0;
+}

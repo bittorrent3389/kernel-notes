@@ -1,0 +1,190 @@
+一个kobject对应sysfs中的一个目录， 而kobject的属性则对应相应目录下的文件。
+
+kobject_create_and_add封装了创建和添加kobject的操作， 创建由kobject_create完成，而将kobject添加到parent目录中去则由kobject_add完成。
+
+主要看kobject_add，这个函数通过kobject_add_varg，先调用kobject_set_name_vargs设置kobject的name,并且设置kobject的parent的指针：kobj->parent = parent;然后调用kobject_add_internal完成kobject的“安装”。
+
+kobject_add_internal里面主要调用了create_dir：
+static int create_dir(struct kobject *kobj)
+{
+ int error = 0;
+ if (kobject_name(kobj)) {
+  error = sysfs_create_dir(kobj);        ／／创建kobject对应的目录
+  if (!error) {
+   //会调用sysfs_create_file在目录下建立kobject的kobj_type里指定的默认属性
+   error = populate_dir(kobj);    
+   if (error)
+    sysfs_remove_dir(kobj);
+  }
+ }
+ return error;
+}
+
+sysfs_create_dir：
+int sysfs_create_dir(struct kobject * kobj)
+{
+ if (kobj->parent)
+  parent_sd = kobj->parent->sd;
+ else
+  parent_sd = &sysfs_root;
+
+ error = create_dir(kobj, parent_sd, type, ns, kobject_name(kobj), &sd);
+
+ return error;
+}
+主要就是获取parent kobject的sysfs_dirent结构并做参数调用create_dir， sysfs_dirent结构的定义：
+/*
+ * sysfs_dirent - the building block of sysfs hierarchy.  Each and
+ * every sysfs node is represented by single sysfs_dirent.
+ *
+ * As long as s_count reference is held, the sysfs_dirent itself is
+ * accessible.  Dereferencing s_elem or any other outer entity
+ * requires s_active reference.
+ */
+struct sysfs_dirent {
+ atomic_t  s_count;
+ atomic_t  s_active;
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+ struct lockdep_map dep_map;
+#endif
+ struct sysfs_dirent *s_parent;
+ const char  *s_name;
+
+ struct rb_node  inode_node;
+ struct rb_node  name_node;
+
+ union {
+  struct completion *completion;
+  struct sysfs_dirent *removed_list;
+ } u;
+
+ const void  *s_ns; /* namespace tag */
+ union {
+  struct sysfs_elem_dir  s_dir;
+  struct sysfs_elem_symlink s_symlink;
+  struct sysfs_elem_attr  s_attr;
+  struct sysfs_elem_bin_attr s_bin_attr;
+ };
+
+ unsigned int  s_flags;
+ unsigned short  s_mode;
+ ino_t   s_ino;
+ struct sysfs_inode_attrs *s_iattr;
+};
+sysfs_dirent结构组成了sysfs的树状结构，sysfs中的每一个目录和文件都有一个此结构与之对应，这类似于proc文件系统的proc_dir_entry的结构。每个sysfs_dirent结构通过inode_node挂入上层目录的s_dir.inode_tree这个rbtree中。同时通过指针s_parent指向上层目录的sysfs_dirent结构。
+此外，还在s_ino中保存了目标inode号。
+
+所以sysfs_create_dir用parent kobject的sysfs_dirent结构并做参数调用create_dir：
+static int create_dir(struct kobject *kobj, struct sysfs_dirent *parent_sd,
+ enum kobj_ns_type type, const void *ns, const char *name,
+ struct sysfs_dirent **p_sd)
+{
+ 。。。 。。。
+ /* allocate */
+ sd = sysfs_new_dirent(name, mode, SYSFS_DIR);
+
+ /* link in */
+ sysfs_addrm_start(&acxt, parent_sd);
+ rc = sysfs_add_one(&acxt, sd);
+ sysfs_addrm_finish(&acxt);
+
+ return rc;
+}
+
+sysfs_add_one又调用__sysfs_add_one：
+int __sysfs_add_one(struct sysfs_addrm_cxt *acxt, struct sysfs_dirent *sd)
+{
+ struct sysfs_inode_attrs *ps_iattr;
+
+ if (sysfs_find_dirent(acxt->parent_sd, sd->s_ns, sd->s_name))
+  return -EEXIST;
+
+ sd->s_parent = sysfs_get(acxt->parent_sd);
+
+ sysfs_link_sibling(sd);
+
+ return 0;
+}
+
+sysfs_new_dirent分配sysfs_dirent结构时会通过sysfs_alloc_ino分配目标inode号并保存在s_ino里。
+
+__sysfs_add_one先检查了目标sysfs_dirent结构是否存在，如果不存在的话，就使s_parent指向上层目录，并通过
+sysfs_link_sibling将其加入上层目录结构的s_dir.inode_tree和其它一些关系中。
+
+至此，sysfs_create_dir或sysfs_create_file的操作也就完成了。不过并没有看到相应目录或文件的dentry结构和
+inode结构的创建。
+当open打开一个sysfs文件时：
+在sys_open>do_sys_open>do_filp_open>path_openat>link_path_walk>walk_component>do_lookup>
+d_alloc_and_lookup里面分配了dentry结构并通过inode->i_op->lookup调用sysfs_lookup:
+（在最近的内核中，如3.8.8，调用路径应该为walk_component>lookup_slow>__lookup_hash>lookup_real>
+dir->i_op->lookup()来调用sysfs_lookup（））
+static struct dentry * sysfs_lookup(struct inode *dir, struct dentry *dentry,
+    struct nameidata *nd)
+{
+        ... ...
+        //在上层sysfs_dirent里搜索名字为name的目录项是否存在，相当于在磁盘目录文件上搜索目录项，如
+        //ext2_find_entry 
+        sd = sysfs_find_dirent(parent_sd, ns, dentry->d_name.name);
+
+        /* attach dentry and inode */
+        inode = sysfs_get_inode(dir->i_sb, sd);  //在这里分配inode结构
+
+        /* instantiate and hash dentry */
+        ret = d_find_alias(inode);
+        if (!ret) {
+           d_set_d_op(dentry, &sysfs_dentry_ops);
+           dentry->d_fsdata = sysfs_get(sd);//这里把目录的sysfs_dirent结构保存在d_fsdata里
+           d_add(dentry, inode);
+        } else {
+           d_move(ret, dentry);
+           iput(inode);
+        }
+ ... ...
+}
+sysfs_get_inode辗转调用sysfs_init_inode:
+static void sysfs_init_inode(struct sysfs_dirent *sd, struct inode *inode)
+{
+ struct bin_attribute *bin_attr;
+
+ inode->i_private = sysfs_get(sd);
+ inode->i_mapping->a_ops = &sysfs_aops;
+ inode->i_mapping->backing_dev_info = &sysfs_backing_dev_info;
+ inode->i_op = &sysfs_inode_operations;
+
+ set_default_inode_attr(inode, sd->s_mode);
+ sysfs_refresh_inode(sd, inode);
+
+ /* initialize inode according to type */
+ switch (sysfs_type(sd)) {
+ case SYSFS_DIR:
+  inode->i_op = &sysfs_dir_inode_operations;
+  inode->i_fop = &sysfs_dir_operations;
+  break;
+ case SYSFS_KOBJ_ATTR:
+  inode->i_size = PAGE_SIZE;
+  inode->i_fop = &sysfs_file_operations;
+  break;
+ case SYSFS_KOBJ_BIN_ATTR:
+  bin_attr = sd->s_bin_attr.bin_attr;
+  inode->i_size = bin_attr->size;
+  inode->i_fop = &bin_fops;
+  break;
+ case SYSFS_KOBJ_LINK:
+  inode->i_op = &sysfs_symlink_inode_operations;
+  break;
+ default:
+  BUG();
+ }
+
+ unlock_new_inode(inode);
+}
+
+sysfs_init_inode里根据目标的类型设置相应的函数指针结构。
+
+这里也可以看出sysfs中的目录和文件在磁盘上没有索引节点和目录项， 只在内存中存在struct sysfs_dirent结构。
+这里，struct sysfs_dirent结构相当于实际文件系统中的结构，随着文件系统结构的变化而变化。
+而dentry结构和inode结构是属于VFS的数据结构，只有对相应目录项进行访问时才会由VFS创建，而不属于具体文件系统，但具体文件系统要负责创建一些特殊操作，如inode->i_op。
+
+具体文件系统通过VFS提供的一些接口进行操作，如：
+sysfs_lookup>sysfs_get_inode>iget_locked获得inode
+sysfs_lookup>d_materialise_unique

@@ -1,0 +1,72 @@
+vma->vm_flags 与vma->vm_page_prot
+=================================
+
+vma->vm_flags标明当前vma的属性，如是否可读、是否可写、是否为IO内存等，其值定义于
+include/linux/mm.h：
+
+#define VM_NONE 0x00000000
+
+#define VM_READ 0x00000001 /* currently active flags */
+#define VM_WRITE 0x00000002
+#define VM_EXEC 0x00000004
+#define VM_SHARED 0x00000008
+... ...
+#define VM_IO           0x00004000 /* Memory mapped I/O or similar */
+... ...
+而vma->vm_page_prot则标明了此vma对应的物理内存页的访问属性，对应着pte中的后几位标志位。
+
+vma->vm_page_prot = protection_map[vm_flags & 0x0f];
+
+任何采用分页影射的CPU中，都有pgd，pte这样的结构。
+同时，所有CPU的pte中，pte的后几bit都是作为page的属性位，表示page可否读，写，执行.....
+
+protection_map[16]中的__P000，__P001........__S111，是对pte后几位的抽象描述。
+而__P000，__P001........__S111这些宏定义，对应于不同的CPU，有不同的定义值，这些不同CPU上的不同定义值，是对pte后几位的实际描述。 
+Ref:
+http://bbs.chinaunix.net/forum.php?mod=viewthread&action=printable&tid=2110189
+
+vma->vm_page_prot与vma->vm_flags有一定的对应关系，vma->vm_page_prot的设置：
+mm/mmap.c:
+mmap_region()
+        |_vma->vm_page_prot = vm_get_page_prot(vm_flags);
+
+pgprot_t protection_map[16] = {
+         __P000, __P001, __P010, __P011, __P100, __P101, __P110, __P111,
+         __S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
+};
+
+pgprot_t vm_get_page_prot(unsigned long vm_flags)
+{
+         return __pgprot(pgprot_val(protection_map[vm_flags &
+         (VM_READ|VM_WRITE|VM_EXEC|VM_SHARED)]) |
+         pgprot_val(arch_vm_get_page_prot(vm_flags)));
+}
+EXPORT_SYMBOL(vm_get_page_prot);
+
+__P000与__S001则对应着pte中相应标志位的值，因为这些值在不同的架构下不同，所以定义在arch下面的头文件里，比如x86:
+arch/x86/include/asm/pgtable_types.h
+/*    xwr */
+#define __P000 PAGE_NONE
+#define __P001 PAGE_READONLY
+... ...
+#define __S000 PAGE_NONE
+#define __S001 PAGE_READONLY
+#define __S010 PAGE_SHARED
+
+而对vma->vm_page_prot的使用，则出现在如：
+
+int vm_insert_page(struct vm_area_struct *vma, unsigned long addr,
+ struct page *page)
+{
+         .... ....
+         return insert_page(vma, addr, page, vma->vm_page_prot);
+}
+EXPORT_SYMBOL(vm_insert_page);
+
+static int insert_page(struct vm_area_struct *vma, unsigned long addr,
+ struct page *page, pgprot_t prot)
+{
+        ... ...
+        set_pte_at(mm, addr, pte, mk_pte(page, prot));
+        ... ...
+}

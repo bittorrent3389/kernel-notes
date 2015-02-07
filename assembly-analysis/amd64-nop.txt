@@ -1,0 +1,24 @@
+amd64反汇编代码中可以见到如nopl、nopw这样的指令，并且一般都包含参数，这实际上是
+gas生成的多字节的nop指令：
+
+http://stackoverflow.com/questions/12559475/what-does-nopl-do-in-x86-system
+
+http://stackoverflow.com/questions/17030771/why-does-x86-nopl-instruction-take-an-operand
+
+amd64中汇编代码中添加nops的作用有两种，第一如果下面的一条指令是某个jump指令的目标，则
+nop指令使下一条指令的地址以16/32对齐，这样和缓冲行对齐后可以减少指令从内存到缓冲行的读取
+次数，提高效率；还有更重要的作用，amd64 cpu有个优化,就是cpu可以：
+2 integers, 1 floating point, and 1 jump instruction all in one go
+也就是说每个16/32字节的指令块里只能有一条jump指令，使用nop指令可以确保这一点。
+
+Ref:
+
+http://linux.m2osw.com/so-many-nopw-and-nopl-amd64-code
+
+http://john.freml.in/amd64-nopl
+
+https://sourceware.org/cgi-bin/cvsweb.cgi/src/gas/config/tc-i386.c?rev=1.426&content-type=text/x-cvsweb-markup&cvsroot=src
+
+GAS包含于GNU Binutils包：
+
+http://www.gnu.org/software/binutils/

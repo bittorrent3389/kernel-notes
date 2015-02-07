@@ -1,0 +1,10 @@
+i915_ring_init:
+===============
+
+i915_driver_load
+	|_i915_load_modeset_init
+		|_i915_gem_init
+			|_i915_gem_init_hw
+				|_ret = dev_priv->gt.init_rings(dev);
+				  (i915_gem_init_rings)
+				|_i915_gem_context_enable

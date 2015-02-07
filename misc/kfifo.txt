@@ -1,0 +1,45 @@
+最新的内核里，kfifo定义在lib/kfifo.c，接口在include/linux/kfifo.h。
+
+kfifo在实现上通过一个环形缓冲来实现，缓冲的大小可以由用户来指定（可以通过kfifo_alloc）。
+
+在对外的逻辑上，kfifo要实现一个队列，也就是先进先出。所以实现上在
+struct __kfifo {
+ unsigned int in;
+ unsigned int out;
+ unsigned int mask;
+ unsigned int esize;
+ void *data;
+};
+结构中有两个unsigned int的cursor　in和out，实际运行过程中虽然有可能写到了缓冲区的尾部而绕回到缓冲区头部来写，但是in和out总是增加的，并且in>=out。
+
+所以队列中的量为：
+#define kfifo_len(fifo) \
+({ \
+ typeof((fifo) + 1) __tmpl = (fifo); \
+ __tmpl->kfifo.in - __tmpl->kfifo.out; \
+})
+
+而队列中的可用数据空间为
+#define kfifo_avail(fifo) \
+__kfifo_uint_must_check_helper( \
+({ \
+ typeof((fifo) + 1) __tmpq = (fifo); \
+ const size_t __recsize = sizeof(*__tmpq->rectype); \
+ unsigned int __avail = kfifo_size(__tmpq) - kfifo_len(__tmpq); \
+ (__recsize) ? ((__avail <= __recsize) ? 0 : \
+ __kfifo_max_r(__avail - __recsize, __recsize)) : \
+ __avail; \
+}) \
+)
+实际上就是通过
+ fifo->size - (fifo->in – fifo->out) = fifo->size – fifo->in + fifo->out
+算得。
+
+值得注意的是即便fifo->in溢出变成了一个小的数，而此时fifo->out为一个很大的数，这时fifo->in – fifo->out也会反向溢出，得到一个大于fifo->in而小于fifo->size的数,这个数就是队列中的数据量。也就是说fifo->in – fifo->out永远等于队列中的数据量，进而上面计算实际可用空间的公式 fifo->size - (fifo->in – fifo->out) = fifo->size – fifo->in + fifo->out也总是成立。
+
+见：
+http://wangcong.org/blog/archives/44
+http://blog.csdn.net/linyt/article/details/5764312
+
+
+

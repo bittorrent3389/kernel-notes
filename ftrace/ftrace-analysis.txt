@@ -1,0 +1,217 @@
+动态Ftrace,以x86为例。
+======================
+
+当使用静态Ftrace即未启用CONFIG_DYNAMIC_FTRACE时，在arch/x86/kernel/entry_32.S里定义了mcount函数：
+ENTRY(mcount)，此时mcount里的操作基本上按照ftrace-design.txt里的描述来进行，即要判断ftrace_trace_function
+是否等于ftrace_stub，如果不等，就call *ftrace_trace_function
+
+当打开选项CONFIG_DYNAMIC_FTRACE时，使用动态Ftrace，此时mcount的定义只有
+ENTRY(mcount)
+	ret
+END(mcount)
+因为对mcount的调用会被换成对ftrace_caller的调用，这是由ftrace_make_call完成的，见ftrace-design.txt
+There are two functions that are used to do runtime patching of arbitrary
+functions.  The first is used to turn the mcount call site into a nop (which
+is what helps us retain runtime performance when not tracing).  The second is
+used to turn the mcount call site into a call to an arbitrary location (but
+typically that is ftracer_caller()).  See the general function definition in
+linux/ftrace.h for the functions:
+	ftrace_make_nop()
+	ftrace_make_call()
+The rec->ip value is the address of the mcount call site that was collected
+by the scripts/recordmcount.pl during build time.
+
+
+ftrace_caller里则为调用具体的tracer函数准备参数：
+
+ENTRY(ftrace_caller)
+	cmpl $0, function_trace_stop
+	jne  ftrace_stub
+
+	pushl %eax
+	pushl %ecx
+	pushl %edx
+    //wjx:the following prepare the parameter for the actural tracer function
+	pushl $0	/* Pass NULL as regs pointer */
+    //wjx:将mcount的返回地址放%eax
+	movl 4*4(%esp), %eax
+    //wjx:%edx:tracer的第二个参数,foo()->bar()->mcount()时ebp为bar()的桢指针，0x4(%ebp)即为
+    //bar()在foo()中的返回地址。
+	movl 0x4(%ebp), %edx                
+	movl function_trace_op, %ecx        //wjx:%ecx:tracer的第三个参数ftrace_ops
+    //wjx:下面得到mcount的调用地址，作为调用trace函数如stack_trace_call,的第一个参数ip。
+	subl $MCOUNT_INSN_SIZE, %eax
+    //wjx:没看到在这里的栈上存放tracer函数的返回地址,ftrace_call+0x5/0xb是如何放到栈上的？
+    //答，call指令会自动压入。
+
+.globl ftrace_call
+ftrace_call:
+	call ftrace_stub
+
+	addl $4,%esp	/* skip NULL pointer */
+	popl %edx
+	popl %ecx
+	popl %eax
+ftrace_ret:
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+.globl ftrace_graph_call
+ftrace_graph_call:
+	jmp ftrace_stub
+#endif
+
+.globl ftrace_stub
+ftrace_stub:
+	ret
+END(ftrace_caller)
+
+ftrace_call处初始只是调用ftrace_stub，在进行trace时会被修改成相应的tracer函数，这是通过ftrace_update_ftrace_func()
+来完成的：
+
+The last function is used to do runtime patching of the active tracer.  This
+will be modifying the assembly code at the location of the ftrace_call symbol
+inside of the ftrace_caller() function.  So you should have sufficient padding
+at that location to support the new function calls you'll be inserting.  Some
+people will be using a "call" type instruction while others will be using a
+"branch" type instruction.  Specifically, the function is:
+	ftrace_update_ftrace_func()
+
+    所以可以看到tracer函数的参数：第一个参数ip对应ftrace_caller里的%eax，即调用mcount的地址，第二个参数parent_ip
+对应ftrace_caller里的%edx，即所trace的函数在其上一个函数里的返回地址，第三个函数op对应上面的%ecx，为
+function_trace_op，第四个函数pt_regs传递了NULL。
+
+ftrace_regs_caller
+==================
+如果ops在注册的时候使用了FTRACE_OPS_FL_SAVE_REGS标志，那么相应的rec->flags就会使用FTRACE_FL_REGS
+标志，
+if (ops->flags & FTRACE_OPS_FL_SAVE_REGS)
+	rec->flags |= FTRACE_FL_REGS;
+这样，在对mcount进行patch时就会使用ftrace_regs_caller:
+	if (rec->flags & FTRACE_FL_REGS)
+		ftrace_addr = (unsigned long)FTRACE_REGS_ADDR;
+	else
+		ftrace_addr = (unsigned long)FTRACE_ADDR;
+这样，就会在调用ftrace_regs_caller时在栈上压入一个struct pt_regs结构，并作为
+trace函数的最后一个参数。
+
+trace函数不会被trace
+====================
+    trace函数不会被trace，实际上相应的函数在编译生成的目标代码中不会生成mcount，这是通过在Makefile中去掉-pg
+选项来实现的：
+
+kernel/trace/Makefile
+
+# Do not instrument the tracer itself:
+
+ifdef CONFIG_FUNCTION_TRACER
+ORIG_CFLAGS := $(KBUILD_CFLAGS)
+KBUILD_CFLAGS = $(subst -pg,,$(ORIG_CFLAGS))
+
+    还有：
+arch/x86/kernel/Makefile
+ifdef CONFIG_FUNCTION_TRACER
+# Do not profile debug and lowlevel utilities
+CFLAGS_REMOVE_tsc.o = -pg
+CFLAGS_REMOVE_paravirt-spinlocks.o = -pg
+CFLAGS_REMOVE_pvclock.o = -pg
+CFLAGS_REMOVE_kvmclock.o = -pg
+CFLAGS_REMOVE_ftrace.o = -pg
+CFLAGS_REMOVE_early_printk.o = -pg
+endif
+    此外，lib/目录下的函数，比如dump_stack，也不会被trace:
+ifdef CONFIG_FUNCTION_TRACER
+ORIG_CFLAGS := $(KBUILD_CFLAGS)
+KBUILD_CFLAGS = $(subst -pg,,$(ORIG_CFLAGS))
+endif
+
+    这样，kernel/trace/下的函数比如stack_trace_call以及arch/x86/kernel/ftrace.c里的
+prepare_ftrace_return等都不会被trace了。
+
+Ftrace API
+==========
+	每个struct dyn_ftrace结构代表了一个可以trace的函数，其中的flags域的低29位
+表示不同的ftrace_ops对此dyn_ftrace所代表函数所使用次数，在注册ftrace_ops时
+会对相关dyn_ftrace进行更新：
+register_ftrace_function->ftrace_startup->ftrace_hash_rec_enable->
+__ftrace_hash_rec_update:
+	do_for_each_ftrace_rec(pg, rec) {
+		ftrace_lookup_ip
+		if (inc) {
+			rec->flags++;
+		} else {
+			rec->flags--;
+		}
+	} while_for_each_ftrace_rec();
+	然后在：
+register_ftrace_function->ftrace_startup->ftrace_startup_enable->
+ftrace_run_update_code->arch_ftrace_update_code->ftrace_modify_all_code(x86)->
+ftrace_replace_code->
+	do_for_each_ftrace_rec(pg, rec) {
+		__ftrace_replace_code->ftrace_update_record
+				     ->ftrace_make_call/ftrace_make_nop
+	} while_for_each_ftrace_rec();
+	也就是说通过ftrace_update_record来判断是否需要对当前rec对应函数的mcount位置
+进行修改。如果需要，通过ftrace_make_call来进行修改，修改的目标可以是FTRACE_ADDR(ftrace_caller)或
+FTRACE_REGS_ADDR(ftrace_regs_caller)
+
+	对ftrace_call位置的修改是在同一个函数即ftrace_modify_all_code中进行的，在调用完
+ftrace_replace_code之后通过ftrace_update_ftrace_func进行：
+register_ftrace_function->ftrace_startup->ftrace_startup_enable->
+ftrace_run_update_code->arch_ftrace_update_code->ftrace_modify_all_code(x86)->
+ftrace_update_ftrace_func
+
+	当然，在通过向filter文件写内容或通过接口ftrace_set_filter_ip等修改hash后，也要对
+相应的dyn_ftrace结构进行更新，并修改相应变更函数的mcount，这是通过间接调用相关的函数来
+完成的：
+ftrace_regex_release
+		|__ftrace_hash_move
+		|		|__ftrace_hash_rec_enable
+		|				|___ftrace_hash_rec_update
+		|__ftrace_ops_update_code
+				|__ftrace_run_update_code
+ftrace_set_filter_ip->ftrace_set_addr
+-> ftrace_set_hash
+		|__ftrace_hash_move
+		|		|__ftrace_hash_rec_enable
+		|				|___ftrace_hash_rec_update
+		|__ftrace_ops_update_code
+				|__ftrace_run_update_code
+
+*注意*
+------
+	在使用register_ftrace_function注册一个ftrace_ops之前也可以使用ftrace_set_filter_ip等函数
+先注册要过滤的函数，如kpatch的kpatch_register里所做的操作，但是因为此时FTRACE_OPS_FL_ENABLED标志
+位没有设置，所以因为ftrace_ops_update_code里对这个标志位的判断，不会马上修改代码，而要到
+register_ftrace_function时才会修改代码。
+
+每个要实现filter文件的tracer都要使用以下操作：
+---------------------------------------------
+
+static int
+stack_trace_filter_open(struct inode *inode, struct file *file)
+{
+	return ftrace_regex_open(&trace_ops, FTRACE_ITER_FILTER,
+				 inode, file);
+}
+
+static const struct file_operations stack_trace_filter_fops = {
+	.open = stack_trace_filter_open,
+	.read = seq_read,
+	.write = ftrace_filter_write,
+	.llseek = tracing_lseek,
+	.release = ftrace_regex_release,
+};
+
+API
+---
+注册tracer:
+register_ftrace_function
+默认情况下过滤所有函数，如果要过滤指定函数，可以通过下面的api来指定：
+EXPORT_SYMBOL_GPL(ftrace_set_filter_ip);
+EXPORT_SYMBOL_GPL(ftrace_set_filter);
+EXPORT_SYMBOL_GPL(ftrace_set_notrace);
+EXPORT_SYMBOL_GPL(ftrace_set_global_filter);
+EXPORT_SYMBOL_GPL(ftrace_set_global_notrace);
+
+function_graph case
+===================
+	register_ftrace_graph->ftrace_startup

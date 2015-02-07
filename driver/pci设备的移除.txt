@@ -1,0 +1,61 @@
+在以前的内核中（如2.6.34)，pci设备的移除是通过pci_remove_bus_device()完成的：
+drivers/pci/remove.c
+pci_remove_bus_device()
+    |_pci_stop_bus_device()-->pci_stop_dev()-->device_unregister()
+    |_pci_destroy_dev()
+        |_ list_del(&dev->bus_list);
+        |_pci_free_resources()
+        |_pci_dev_put()-->put_device()
+
+而在当前的内核中：
+drivers/pci/remove.c
+pci_stop_and_remove_bus_device()
+    |_pci_stop_bus_device()-->pci_stop_dev()-->device_unregister()
+    |_pci_remove_bus_device()-->pci_destroy_dev()
+                                                         |_list_del(&dev->bus_list);
+                                                         |_pci_free_resources()
+                                                         |_pci_dev_put()-->put_device()
+----------------------------------------------------------------
+drivers/base/core.c
+device_unregister()
+    |_device_del(dev)-->kobject_del()-->sysfs_remove_dir()
+    |_put_device(dev)--> kobject_put(&dev->kobj);
+                                          |_ kref_put(&kobj->kref, kobject_release);
+kobject_release()-->kobject_cleanup()
+                                     |_ struct kobj_type *t = get_ktype(kobj);
+                                     |_ t->release(kobj);
+这里通过put_device(dev)--> kobject_put(&dev->kobj);减小device(kobject)的引用计数，引用计数为0时会通过kobject_release()来调用相应kobj_type的release函数。
+
+对于struct device结构的kobject:
+void device_initialize(struct device *dev)
+{
+ dev->kobj.kset = devices_kset;
+ kobject_init(&dev->kobj, &device_ktype);
+ ... ...
+}
+static struct kobj_type device_ktype = {
+ .release = device_release,
+ .sysfs_ops = &dev_sysfs_ops,
+ .namespace = device_namespace,
+};
+
+所以t->release(kobj);就是
+device_release() {
+     dev->release(dev);
+}
+对于pci设备，
+void pci_device_add(struct pci_dev *dev, struct pci_bus *bus)
+{
+ device_initialize(&dev->dev);
+ dev->dev.release = pci_release_dev;
+ ... ...
+}
+static void pci_release_dev(struct device *dev)
+{
+ struct pci_dev *pci_dev;
+
+ pci_dev = to_pci_dev(dev);
+ pci_release_capabilities(pci_dev);
+ kfree(pci_dev);
+}
+主要就是通过kfree(pci_dev);释放pci_dev结构。

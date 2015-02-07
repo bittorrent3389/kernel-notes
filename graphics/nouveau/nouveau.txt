@@ -1,0 +1,238 @@
+nouveau_device的创建
+====================
+
+nouveau_drm_probe
+	|
+nouveau_device_create
+	|
+#define nouveau_device_create(p,t,n,s,c,d,u)                                   \
+
+//wjx:一层一层的创建nouveau_device及里面的嵌套结构
+//其实nouveau_device结构的空间在nouveau_drm_probe
+//里并没有分配，是到了nouveau_object_create_里才分配
+//的。
+nouveau_device_create_
+	|
+	|__nouveau_engine_create_
+		|
+		|__nouveau_subdev_create_
+			|
+			|__nouveau_object_create_
+
+MISC
+====
+
+(drivers/gpu/drm/nouveau/core/include/core/printk.h)
+nv_printk_
+(drivers/gpu/drm/nouveau/core/core/printk.c)
+
+drivers/gpu/drm/nouveau/core/include/core/device.h
+struct nouveau_device {}
+
+
+drivers/gpu/drm/nouveau/core/engine/fifo/nv50.c
+struct nouveau_oclass *
+nv50_fifo_oclass = &(struct nouveau_oclass) {
+	.handle = NV_ENGINE(FIFO, 0x50),
+	.ofuncs = &(struct nouveau_ofuncs) {
+		.ctor = nv50_fifo_ctor,
+		.dtor = nv50_fifo_dtor,
+		.init = nv50_fifo_init,
+		.fini = _nouveau_fifo_fini,
+	},
+};
+
+nouveau_drm结构的分配
+---------------------
+drivers/gpu/drm/nouveau/nouveau_drm.c
+nouveau_drm_load
+
+
+-------------
+drivers/gpu/drm/nouveau/core/include/core/subdev.h
+struct nouveau_subdev {
+	struct nouveau_object base;
+	struct mutex mutex;
+	const char *name;
+	void __iomem *mmio;
+	u32 debug;
+	u32 unit;
+
+	void (*intr)(struct nouveau_subdev *);
+};
+
+drivers/gpu/drm/nouveau/core/include/core/object.h
+struct nouveau_object {
+	struct nouveau_oclass *oclass;
+	struct nouveau_object *parent;
+	struct nouveau_object *engine;
+	atomic_t refcount;
+	atomic_t usecount;
+#if CONFIG_NOUVEAU_DEBUG >= NV_DBG_PARANOIA
+#define NOUVEAU_OBJECT_MAGIC 0x75ef0bad
+	struct list_head list;
+	u32 _magic;
+#endif
+};
+---------------------------------
+struct nouveau_device *device = nv_device(subdev);
+
+drivers/gpu/drm/nouveau/core/include/core/device.h
+static inline struct nouveau_device *
+nv_device(void *obj)
+{
+	struct nouveau_object *object = nv_object(obj);
+	struct nouveau_object *device = object;
+
+	if (device->engine)
+		device = device->engine;
+	if (device->parent)
+		device = device->parent;
+
+#if CONFIG_NOUVEAU_DEBUG >= NV_DBG_PARANOIA
+	if (unlikely(!nv_iclass(device, NV_SUBDEV_CLASS) ||
+		     (nv_hclass(device) & 0xff) != NVDEV_ENGINE_DEVICE)) {
+		nv_assert("BAD CAST -> NvDevice, 0x%08x 0x%08x",
+			  nv_hclass(object), nv_hclass(device));
+	}
+#endif
+
+	return (void *)device;
+}
+
+static inline struct nouveau_subdev *
+nouveau_subdev(void *obj, int sub)
+{
+	if (nv_device(obj)->subdev[sub])
+		return nv_subdev(nv_device(obj)->subdev[sub]);
+	return NULL;
+}
+
+
+nouveau driver register flow
+============================
+(1)
+nouveau_drm_init
+	|
+//driver为struct drm_driver，在nouveau_drm.c中分配
+drm_pci_init(&driver, &nouveau_drm_pci_driver); 
+	|_pci_register_driver(pdriver);
+	|_drm_get_pci_dev
+		|_drm_dev_alloc
+
+(2)
+nouveau_drm_probe	nouveau_drm_pci_driver.probe 
+	|_nouveau_device_create		(创建nouveau_device结构)
+	|_drm_get_pci_dev(pdev, pent, &driver);
+		|_drm_dev_alloc		分配drm_device 结构
+		|_pci_enable_device	enable pci设备
+		|_drm_dev_register	注册drm_device 结构
+			|_drm_minor_register
+			|_nouveau_drm_load	dev->driver->load(dev, flags);
+			(创建nouveau_drm结构)		
+				|_nouveau_cli_create
+(3)
+open(/dev/dri/card0)
+	|_drm_stub_open
+		|_drm_open			filp->f_op->open()
+			|_drm_open_helper
+				|_nouveau_drm_open	dev->driver->open()
+					|_nouveau_cli_create()
+
+SUBDEVS
+=======
+
+nv50_fifo_priv的分配与创建
+--------------------------
+nv84_fifo_ctor
+	|
+	|_nouveau_fifo_create
+		|
+		|__nouveau_engine_create_
+
+每个nouveau_device都包含多个subsystems或多个subdev，nouveau_device结构里有一个
+nouveau_oclass结构指针数组
+	struct nouveau_oclass *oclass[NVDEV_SUBDEV_NR];
+每个subdev对应其中一个nouveau_oclass结构，这个数组是在core/engine/device/nvXX.c
+里通过nvXX_identify，再根据不同的chipset来设置的，如nv50_identify，其中FIFO
+engine的设置：
+	device->oclass[NVDEV_ENGINE_FIFO   ] =  nv84_fifo_oclass;
+每个subdev结构内部其实都有一个nouveau_object结构，具体的subdev结构都是通过
+nouveau_oclass->ofuncs->ctor来构造的，如nv84_fifo_ctor，过程如下：
+nouveau_devobj_ctor:
+	for (i = 1, c = 1; i < NVDEV_SUBDEV_NR; i++) {
+		nouveau_object_ctor
+			|_ofuncs = oclass->ofuncs;
+			|_ofuncs->ctor()
+	}
+
+nouveau_device也有一个全局的struct nouveau_oclass nouveau_device_sclass
+在创建nouveau_device时被设置为sclass:
+
+nv_engine(device)->sclass = nouveau_device_sclass;
+
+???这个nouveau_device_sclass->ofuncs何时被使用？
+
+nv50_fifo_ctor:
+nv_subdev(priv)->intr = nv04_fifo_intr;
+
+nv04_fifo_intr
+	|
+nv04_fifo_dma_pusher	(NV_50)
+	nv_error 
+		|
+		|__#define nv_error(o,f,a...) nv_printk((o), ERROR, f, ##a)
+
+nouveau_oclass.ofuncs.init 的调用：
+----------------------------------
+如nv50_fifo_init 	(nv84_fifo_oclass.ofuncs.init)的调用：
+nouveau_drm_load
+	|_nouveau_accel_init
+		|_nouveau_channel_new
+			|_nouveau_channel_ind
+				|_nouveau_object_new
+					|_nouveau_object_inc(engine);
+						|_nv50_fifo_init
+(1)为什么不是下面的这条路径？
+----------------------------
+nouveau_drm_load
+	|_nouveau_object_new
+		|_nouveau_object_inc
+			|_nouveau_device_init
+因为此时还没有调用nouveau_devobj_ctor
+所以device->subdev[i]中的各subdev均为空，所以nouveau_device_init没做什么事情
+
+(2)nouveau_object_inc中的nv_trace为什么没有输出？
+------------------------------------------------
+不同的subdev可以有不同的debug level，设置：
+nouveau_subdev_create_-->subdev->debug = nouveau_dbgopt(device->dbgopt, subname);
+在nouveau_dbgopt中，默认的level为CONFIG_NOUVEAU_DEBUG_DEFAULT
+
+在nv_printk_中，会对打印语句的level进行判断：
+if (level > nv_subdev(subdev)->debug)
+	return;
+
+
+nv04_mc_priv的分配与创建
+------------------------
+NVDEV_SUBDEV_MC也是一个subdev:
+device->oclass[NVDEV_SUBDEV_MC     ] =  nv98_mc_oclass;
+其中：
+struct nouveau_mc_intr {
+	u32 stat;
+	u32 unit;
+};
+struct nouveau_mc_oclass {
+	struct nouveau_oclass base;
+	const struct nouveau_mc_intr *intr;
+	void (*msi_rearm)(struct nouveau_mc *);
+};
+
+所以在创建各subdev对象时，也会调用其ctor函数：
+nouveau_object_ctor->.ctor = nv04_mc_ctor,
+nv04_mc_ctor
+	|_nouveau_mc_create_
+		|_nouveau_subdev_create_
+		|_request_irq	
+注册了中断处理函数nouveau_mc_intr后，每当中断到来时，会遍历调用nv98_mc_intr中
+各个subdev的intr函数，如nv04_fifo_intr

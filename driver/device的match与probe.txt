@@ -1,0 +1,36 @@
+device_register()-->device_add()-->bus_probe_device()-->device_attach()
+-->bus_for_each_drv(dev->bus, NULL, dev, __device_attach)-->__device_attach()
+__device_attach()
+        |_driver_match_device()
+        |_driver_probe_device()     //match成功后就会尝试probe
+
+可以看出，match是由当前加入系统的设备或驱动（后加入系统的设备）发起的。而无论从哪个方向发起，match和probe的过程基本是一样的，都是调用driver_match_device()和driver_probe_device()，只是扫描的对象不同。
+对于驱动以模块的形式实现，系统运行中插入设备的情况应该是这样的：１系统检测到并添加（注册）设备
+２扫描相应总线上已注册的驱动，没能match成功；３udev收到设备添加事件，通过MODULE_DEVICE_TABLE找到对应的module，加载之；４注册module里的driver，扫描总线上的所有设备，找到相应设备。
+
+-----------------------------------------------------------------------------------
+                                        probe过程
+-----------------------------------------------------------------------------------
+drivers/base/dd.c
+
+__driver_attach
+__device_attach
+        |_driver_probe_device()-->really_probe()
+
+优先使用bus_type里的方法，先看bus_type的probe是否存在，如不存在才使用device_driver里的probe:
+
+ if (dev->bus->probe) {
+         ret = dev->bus->probe(dev);
+         if (ret)
+                 goto probe_failed;
+ } else if (drv->probe) {
+         ret = drv->probe(dev);
+         if (ret)
+                 goto probe_failed;
+ }
+而在bus相关的probe里还会调用对应driver的probe，如pci总线的probe:
+struct bus_type pci_bus_type = {
+        .probe = pci_device_probe,
+};
+pci_device_probe()-->__pci_device_probe()-->pci_call_probe()-->local_pci_probe()
+-->pci_drv->probe(pci_dev, ddi->id);

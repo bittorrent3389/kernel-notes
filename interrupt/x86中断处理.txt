@@ -1,0 +1,62 @@
+OVERVIEW
+每条中断线都有一个struct irq_desc结构与之对应，所以系统中有一个以中断数为大小的数组，同样定义于
+include/linux/irqdesc.h：
+extern struct irq_desc irq_desc[NR_IRQS];
+每个interrupt handler都有一个irqaction与之对应，对于多个handler共享一条中断线的情况，各个handler链成一个队列，就是struct irq_desc结构中的指针struct irqaction *action。
+而通过request_irq()注册一个handler时，就要分配一个struct irqaction并链入相应队列：
+request_irq() -> request_threaded_irq() -> __setup_irq()
+
+x86中断处理过程:
+
+arch/x86/kernel/entry_32.S
+
+ENTRY(interrupt) --> common_interrupt
+ call do_IRQ
+
+arch/x86/kernel/irq.c
+do_IRQ --> handle_irq
+do_IRQ里通过 irq = __this_cpu_read(vector_irq[vector]);获得发生中断的中断号，并传给handle_irq()
+
+arch/x86/kernel/irq_32.c
+handle_irq --> handle_level_irq
+handle_irq()里通过 desc = irq_to_desc(irq);获得此中断线对应的struct irq_desc结构，并通过 desc->handle_irq(irq, desc);传给handle_level_irq或handle_edge_irq
+
+kernel/irq/chip.c
+handle_level_irq --> handle_irq_event
+handle_edge_irq里做一些必须工作后（如irq_ack），用struct irq_desc结构指针desc做参数调用 handle_irq_event(desc);
+
+kernel/irq/handle.c
+handle_irq_event --> handle_irq_event_percpu(循环同一条中断线上的所有handler)
+handle_irq_event里设置相应状态后，以desc和desc队列中的第一个irqaction结构为参数调用handle_irq_event_percpu，然后handle_irq_event_percpu通过一个循环调用这条中断线上的所有handler（遍历desc中的 irqaction队列）。
+
+desc->handle_irq的设置
+desc->handle_irq is 由irq_set_chip_and_handler_name()设置，如在
+arch/x86/kernel/i8259.c 中，
+make_8259A_irq --> irq_set_chip_and_handler_name(handle_level_irq) --> __irq_set_handler --> desc->handle_irq = handle;
+
+arch/x86/kernel/apic/io_apic.c里也多次调用irq_set_chip_and_handler_name()来设置不同irq的desc->handle_irq()。但是设置的不同的handle_irq(handle_level_irq或handle_edge_irq等)都会调用handle_irq_event循环同一条中断线上的handler。
+
+中断和抢占
+有关中断过程中的preempt_count:
+在do_IRQ中会调用irq_enter()和irq_exit()，分别定义于kernel/softirq.c，其中会增减preempt_count，所以如果从中断返回到中断中或返回到spinlock保护的区域时，不会发生抢占，因为这时preempt_count不为0
+
+IRQS_WAITING标志
+arch/x86/kernel/entry_32.S
+-->do_IRQ()-->handle_irq()-->handle_edge_irq():
+1.清除IRQS_WAITING标志
+ desc->istate &= ~(IRQS_REPLAY | IRQS_WAITING);
+2.ack the device
+ desc->irq_data.chip->irq_ack(&desc->irq_data);
+3. --->handle_irq_event()
+
+handle_irq_event-->handle_irq_event_percpu-->action->handler(irq, action->dev_id);
+
+handle_edge_irq(): kernel/irq/chip.c
+handle_irq():   arch/x86/kernel/irq_32.c
+handle_irq_event(): kernel/irq/handle.c
+
+From ldd3 chapter10:
+Probing for IRQs is done by setting the IRQ_WAITING status bit for each IRQ that cur-
+rently lacks a handler. When the interrupt happens, do_IRQ clears that bit and then
+returns, because no handler is registered. probe_irq_off, when called by a driver,
+needs to search for only the IRQ that no longer has IRQ_WAITING set.

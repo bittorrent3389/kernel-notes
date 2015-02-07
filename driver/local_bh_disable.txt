@@ -1,0 +1,16 @@
+其实现：
+void local_bh_disable(void)
+{
+ __local_bh_disable((unsigned long)__builtin_return_address(0),
+ SOFTIRQ_DISABLE_OFFSET);
+}
+
+static inline void __local_bh_disable(unsigned long ip, unsigned int cnt)
+{
+ add_preempt_count(cnt);
+ barrier();
+}
+
+就是向preempt_count增加SOFTIRQ_DISABLE_OFFSET，32位的preempt_count被分成几部分，分别用于hardirq,softirq和preempt_count，见ULK讲解softirq的相关章节。
+
+调用local_bh_diable()后，由于preempt_count的增加，irq_exit里由于in_interrupt的判断，就不会调用invoke_softirq了，进而也就不会１）直接调用下半部，或２）唤醒ksoftirqd。（即使唤醒ksoftirqd也没用，因为preempt_count不为０，也不能抢占）。

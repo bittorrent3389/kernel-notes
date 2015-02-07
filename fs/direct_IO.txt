@@ -1,0 +1,48 @@
+传统的read/write称为cached io，因为数据会被存放在内核页面缓存中以提高后续访问的速度，所以访问磁盘数据时就有个先从磁盘读数据到内核页缓存，再拷贝到用户中的过程。
+
+对于mmap，则因为直接将用户地址空间映射到了内核缓存页面，而省去了页缓存到用户空间的拷贝过程。
+
+而直接IO，则不使用内核页缓存，直接将数据从设备读/写到用户空间页面中。
+
+使用上有下面一些要求：
+1，在open文件时加上O_DIRECT旗标，这样以通告内核我们想对该文件进行直接io操作。
+2，在源文件的最顶端加上_GNU_SOURCE宏定义，或在编译时加在命令行上也可以，否则将提示：
+
+direct_io_write_file.c: In function 'main': 
+direct_io_write_file.c:25: error: 'O_DIRECT' undeclared (first use in this function) 
+direct_io_write_file.c:25: error: (Each undeclared identifier is reported only once 
+direct_io_write_file.c:25: error: for each function it appears in.) 
+
+3，存放文件数据的缓存区起始位置以及每一次读写数据长度必须是磁盘逻辑块大小的整数倍，一般也就是512字节（也有可能是一内存页大小，4096），否则将导致read/write失败，perror将提示：read failed: Invalid argument或write failed: Invalid argument。
+
+见
+http://lenky.info/archives/2012/05/16/1660
+
+------
+
+实现上，主要通过函数
+    int get_user_pages(struct task_struct *task, 
+                       struct mm_struct *mm,
+		       unsigned long start, 
+		       int len, 
+		       int write, 
+		       int force,
+		       struct page **pages, 
+		       struct vm_area_struct **vmas);
+找到或创建start和len指定的用户空间对应的物理内存页，并通过pages返回，这样，后面驱动中就可以对这些
+页面进行读写了（可能先要通过kmap或kmap_atomic转换成内核虚拟地址），所以get_user_pages()主要是在read或write路径上被调用。网络和块设备层有对direct IO相应的处理，所以相应的驱动也不需要特殊的操作。
+
+因为所进行的操作都是直接针对用户空间页面的，所以这些页面是会被换出的交换区的（因为不是文件页缓冲，所以不会被换出到相应文件）。所以如果驱动更改了相应内存页，要通过SetPageDirty(struct page *page)标记内存页为脏，以防止页面被简单丢弃。
+
+驱动完成对页面的操作后，还要通过page_cache_release()减小页面的引用计数，否则页面不会被释放（get_user_pages曾调用get_page()增加页面引用计数）。
+
+？？？
+页面引用计数是控制页面释放，还是控制页面换出？
+调用page_cache_release后页面不会被立即释放吧，因为回到用户空间后页面还会被访问？
+这里调用page_cache_release只是要确保进程退出后页面能被释放？
+
+Ref:
+http://lenky.info/archives/2012/05/16/1660
+http://www.ibm.com/developerworks/cn/linux/l-cn-directio/
+http://www.360doc.com/content/09/0121/10/98883_2375581.shtml
+http://lwn.net/Articles/28548/

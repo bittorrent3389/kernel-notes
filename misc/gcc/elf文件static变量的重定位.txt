@@ -1,0 +1,149 @@
+
+static变量的重定位
+    由于elf文件中已经初始化的static变量（不管是函数局部的还是全局的）是存放在.data段内的，而目标文件（.o）的各个段在连接的过程中要和其它目标文件的相应段合并，代码段（.text）与数据段之间的间距可能发生变化，所以如果代码段中对static变量的引用（不管是直接引用还是间接引用）都必然需要在连接时进行重定位，进而在重定位表中会有static变量对应的表项。
+    对于全局变量的引用，重定位表中有名字为相应全局变量的表项，而对于static变量，会发现虽然相应表项的offset是对的，但是其名字都是.data，也就是都针对于数据段来重定位，如：
+/*a.c*/
+extern int shared;
+/*int a = 100;*/
+
+int main()
+{
+    static int a = 100;
+    static int b = 101;
+    swap(&a, &b, &shared);
+}
+/*b.c*/
+int shared = 1;
+
+void swap(int *a, int *b)
+{
+    *a ^= *b ^= *a ^= *b;
+}
+
+
+RELOCATION RECORDS FOR [.text]:
+OFFSET   TYPE              VALUE 
+0000000d R_386_32          shared
+00000015 R_386_32          .data
+0000001c R_386_32          .data
+00000021 R_386_PC32        swap
+
+00000000 <main>:
+   0: 55                    push   %ebp
+   1: 89 e5                 mov    %esp,%ebp
+   3: 83 e4 f0              and    $0xfffffff0,%esp
+   6: 83 ec 10              sub    $0x10,%esp
+   9: c7 44 24 08 00 00 00  movl   $0x0,0x8(%esp)
+  10: 00 
+  11: c7 44 24 04 04 00 00  movl   $0x4,0x4(%esp)
+  18: 00 
+  19: c7 04 24 00 00 00 00  movl   $0x0,(%esp)
+  20: e8 fc ff ff ff        call   21 <main+0x21>
+  25: c9                    leave  
+  26: c3                    ret    
+
+    所以这里是靠保存在被修正位置的值来调整的：
+$ objdump -t ab
+
+SYMBOL TABLE:
+08048094 l    d  .text 00000000 .text
+080480f8 l    d  .eh_frame 00000000 .eh_frame
+08049154 l    d  .data 00000000 .data
+00000000 l    d  .comment 00000000 .comment
+00000000 l    df *ABS* 00000000 a.c
+08049158 l     O .data 00000004 b.1369
+08049154 l     O .data 00000004 a.1368
+00000000 l    df *ABS* 00000000 b.c
+... ...
+R_386_32类型重定位项重定位的方式为S+A，即：
+对a和b的引用应该被修改为：
+08049154 + 0 = 08049154
+08049154 + 4 = 08049158
+可由下面验证：
+$ objdump -d ab
+08048094 <main>:
+ 8048094: 55                    push   %ebp
+ 8048095: 89 e5                 mov    %esp,%ebp
+ 8048097: 83 e4 f0              and    $0xfffffff0,%esp
+ 804809a: 83 ec 10              sub    $0x10,%esp
+ 804809d: c7 44 24 08 5c 91 04  movl   $0x804915c,0x8(%esp)
+ 80480a4: 08 
+ 80480a5: c7 44 24 04 58 91 04  movl   $0x8049158,0x4(%esp)
+ 80480ac: 08 
+ 80480ad: c7 04 24 54 91 04 08  movl   $0x8049154,(%esp)
+ 80480b4: e8 02 00 00 00        call   80480bb <swap>
+ 80480b9: c9                    leave  
+ 80480ba: c3                    ret  
+
+程序中对字符串的引用也要进行重定位
+    因为字符串是存放在只读数据段即.rodata里，目标文件连接时不同目标文件的.rodata段也会合并，所以程序中对字符串的引用也要进行重定位，字符串在重定位表中没有名字，使用.rodata来表示，如：
+int main()
+{
+    swap("aaa", "bbb");
+}
+00000000 <main>:
+   0: 55                    push   %ebp
+   1: 89 e5                 mov    %esp,%ebp
+   3: 83 e4 f0              and    $0xfffffff0,%esp
+   6: 83 ec 10              sub    $0x10,%esp
+   9: c7 44 24 04 00 00 00  movl   $0x0,0x4(%esp)
+  10: 00 
+  11: c7 04 24 04 00 00 00  movl   $0x4,(%esp)
+  18: e8 fc ff ff ff        call   19 <main+0x19>
+  1d: c9                    leave  
+  1e: c3                    ret    
+RELOCATION RECORDS FOR [.text]:
+OFFSET   TYPE              VALUE 
+0000000d R_386_32          .rodata
+00000014 R_386_32          .rodata
+00000019 R_386_PC32        swap
+    段标志sh_flags中的SHF_STRINGS应该就是表示这种包含字符串的段，此时相应的重定位项通过addend应该能得对应的字符串：
+         rela->string = rela->sym->sec->data->d_buf + rela->addend;
+    见https://github.com/dynup/kpatch/blob/master/kpatch-build/create-diff-object.c#L256
+
+前文件内部所定义函数的重定位
+    在调用外部函数时，当然要进行重定位。现在发现，在调用当前源文件内部定义的函数时，也不是写死的，也需要重定位，这似乎表明编译器对内部和外部的全局函数都同等的处理，如：
+/*a.c*/
+extern int shared;
+/*int a = 100;*/
+void swap1(int *a, int *b)
+{
+    *a ^= *b ^= *a ^= *b;
+}
+int main()
+{
+    static int a = 100;
+    static int b = 101;
+    swap(&a, &b, &shared);
+    swap1(&b, &a);
+}
+
+0000003a <main>:
+  3a: 55                    push   %ebp
+  3b: 89 e5                 mov    %esp,%ebp
+  3d: 83 e4 f0              and    $0xfffffff0,%esp
+  40: 83 ec 10              sub    $0x10,%esp
+  43: c7 44 24 08 00 00 00  movl   $0x0,0x8(%esp)
+  4a: 00 
+  4b: c7 44 24 04 04 00 00  movl   $0x4,0x4(%esp)
+  52: 00 
+  53: c7 04 24 00 00 00 00  movl   $0x0,(%esp)
+  5a: e8 fc ff ff ff        call   5b <main+0x21>
+  5f: c7 44 24 04 00 00 00  movl   $0x0,0x4(%esp)
+  66: 00 
+  67: c7 04 24 04 00 00 00  movl   $0x4,(%esp)
+  6e: e8 fc ff ff ff        call   6f <main+0x35>
+  73: c9                    leave  
+  74: c3                    ret   
+RELOCATION RECORDS FOR [.text]:
+OFFSET   TYPE              VALUE 
+00000047 R_386_32          shared
+0000004f R_386_32          .data
+00000056 R_386_32          .data
+0000005b R_386_PC32        swap
+00000063 R_386_32          .data
+0000006a R_386_32          .data
+0000006f R_386_PC32        swap1
+
+
+

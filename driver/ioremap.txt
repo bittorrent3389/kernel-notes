@@ -1,0 +1,16 @@
+request_mem_region()、ioremap()与ioport_map()
+=============================================
+
+include/linux/ioport.h
+request_mem_region(start,n,name)
+从iomem_resource 申请分配一块IO内存区，从start开始，大小为n。
+start为物理地址。在这之前设备已经将设备上的内存到了总线上的物理地址上。这里就是申请相应的“资源”。
+通过request_mem_region成功获得一块物理地址后，要以start为参数来调用ioremap()，将这块物理地址映射到虚拟地址空间。
+然后才能通过相应的IO内存读写函数如ioread8()、iowrite16()等来访问。
+
+
+request_region()从ioport_resource（定义于kernel/request.c）中分配内存。
+
+
+将端口映射到虚存空间地址是通过ioport_map()来完成的，映射后得到一个虚存地址，然后可以通过ioread8()等io内存函数来访问。
+调用ioport_map()前仍需要先通过request_region()分配端口。

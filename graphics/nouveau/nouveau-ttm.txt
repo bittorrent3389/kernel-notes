@@ -1,0 +1,31 @@
+nouveau_bo_new
+	|_ttm_bo_init
+		|_ttm_bo_validate
+			|_ttm_bo_move_buffer
+				|_ttm_bo_mem_space
+					|_ttm_mem_type_from_flags
+					|_man = &bdev->man[mem_type];(找到相应的man)
+					|_man->func->get_node
+					(nouveau_vram_manager->nouveau_vram_manager_new)
+						|_创建nouveau_mem
+						并赋予nouveau_bo->ttm_buffer_object->mem->mm_node
+
+
+
+manager的创建：
+nouveau_drm_load
+	|_nouveau_ttm_init(drm);
+		|_ttm_bo_device_init
+			|_ttm_bo_init_mm
+				|_ret = bdev->driver->init_mem_type(bdev, type, man);
+				(nouveau_bo_init_mem_type)
+		/* VRAM init */
+		|_ttm_bo_init_mm
+			|_ret = bdev->driver->init_mem_type(bdev, type, man);
+				(nouveau_bo_init_mem_type)
+			(man->func = &nouveau_vram_manager;)
+		/* GART init */
+		|_ttm_bo_init_mm
+			|_ret = bdev->driver->init_mem_type(bdev, type, man);
+				(nouveau_bo_init_mem_type)
+			(man->func = &nouveau_gart_manager;)

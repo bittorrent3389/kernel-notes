@@ -1,0 +1,17 @@
+分配DMA buffer的方法：
+１　手动：kmalloc、get_free_pages
+２　通过Generic DMA Layer:dma_alloc_coherent()、dma_pool_create()/dma_pool_alloc()
+
+DMA mapping：映射总线地址、同时还可能分配内存。
+COHERENT:
+１　dma_alloc_coherent()
+２　dma_pool_create()
+STREAMING
+３　dma_map_single()
+４　dma_map_page()
+５　dma_map_sg()
+DAC specific
+６　pci_dac_page_to_dma()
+
+而上述的分配buffer与DMA mapping的手段与PCI或ISA总线无关，ISA总线的buffer也可以通过手动或Generic
+layer 分配，ISA的DMA mapping也可以是COHERENT或STREAMING。

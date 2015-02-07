@@ -1,0 +1,250 @@
+//#echo save_stack_trace > set_graph_notrace后，可以发现ftrace_graph_caller下面的很多地址
+//都没有打印出来，这是因为这里无论是调用dump_stack()的位置还是调用stack_trace的位置，
+//都要经过save_stack_trace，都是save_stack_trace的子函数，因为设置了set_graph_notrace，
+//所以在save_stack_trace的func graph里会将curr_ret_stack减小FTRACE_NOTRACE_DEPTH变成负数
+//进而在print_ftrace_graph_addr里通过条件if (!task->ret_stack || index < *graph)
+//返回而不输出真实地址。
+
+[14094.640023] ==============DUMP STACK BEGIN===============
+[14094.640023] When trace->skip=3, addr=3238114912
+[14094.640023] CPU: 1 PID: 5150 Comm: qbittorrent Tainted: PF          O 3.14.0+ #8
+[14094.640023] Hardware name: LENOVO 20005               /JITR1, BIOS 0BCN49WW(V3.01)          11/18/2008
+[14094.640023]  00000000 00000000 c69ef0e4 c1642fe1 c192b978 c69ef100 c101b762 c180e582
+[14094.640023]  c101b660 c101b660 c69ef174 c101b660 c69ef10c c101b79f 00000000 c69ef138
+[14094.640023]  c101251f c1011609 c69efffc c69ee000 c69ef170 ffffe000 c69ef170 c69ef160
+[14094.640023]  f70e6000 c1656df8 c69ef170 c10116b5 c1656df8 c192b978 00000000 c69ef160
+[14094.640023]  c1a72a40 00000001 c69ef160 f16e0d90 00000000 c192b978 c1a75d60 00000df4
+[14094.640023]  c69ef188 c101b660 c69ef170 c1656df8 c192b978 00000001 c69ef1d8 c16525c1
+[14094.640023]  00000014 00000960 d14d896c f0700cc0 169112f5 f7060000 f7033b00 00000001
+[14094.640023]  c69ef1cc c10f2cf2 9837dba0 f7060044 00200083 c1087f49 00000001 c1998d80
+[14094.640023]  c1087f49 c108a3a8 c69ef1f4 c10ecb16 00000000 00002000 00000001 eadc8e00
+[14094.640023]  f06d4414 c69ef24c c165252b 00000000 00000001 00000005 eadc8e00 c1087f4e
+[14094.640023]  c108a379 c108b1d7 c69ef23c c10410b7 c69ef2f8 c69ef2f8 c108a379 00000025
+[14094.640023]  eadc8e00 c1661380 f06d4414 c69ef2a8 00000001 eadc8e00 f06d4414 c69ef2a8
+[14094.640023]  c108a3a8 c11013d0 c69ef288 c107b545 16528217 00000cce c69ef2fc c108b199
+[14094.640023]  c107b545 c69ef298 c10410b7 c69ef314 c69ef314 c108b199 00000024 f7bec540
+[14094.640023]  c1661380 00000cd1 eadc8e00 eadc8e00 c1661380 f06d4414 c69ef2f8 c16525c1
+[14094.640023]  16168f3d 00000cce c69ef318 c107b509 f7bec540 c69ef2e8 c10410b7 c69ef320
+[14094.640023]  c69ef320 c107b509 00000023 00000000 f7bec540 f7bec540 c69ef314 f7bec540
+[14094.640023]  c1661380 00000cd1 c69ef314 c16525c1 f7bec540 c69ef320 00000000 f7bec540
+[14094.640023]  f7bec540 c69ef320 c16525c1 f06d43d0 c69ef330 c16525c1 f06d43d0 00000001
+[14094.640023]  c69ef35c c16525c1 00000000 c1a79540 c1a79540 00200086 f06d4896 00000000
+[14094.640023] Call Trace:
+[14094.640023]  [<c1642fe1>] dump_stack+0x41/0x52
+[14094.640023]  [<c101b762>] __save_stack_address+0x92/0xb0
+[14094.640023]  [<c101b660>] ? save_stack_trace+0x30/0x50
+[14094.640023]  [<c101b660>] ? save_stack_trace+0x30/0x50
+[14094.640023]  [<c101b660>] ? save_stack_trace+0x30/0x50
+[14094.640023]  [<c101b79f>] save_stack_address+0x1f/0x30
+[14094.640023]  [<c101251f>] print_context_stack+0x9f/0xd0
+[14094.640023]  [<c1011609>] ? dump_trace+0x9/0x1b0
+[14094.640023]  [<c10116b5>] dump_trace+0xb5/0x1b0
+[14094.640023]  [<c101b660>] save_stack_trace+0x30/0x50
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c10f2cf2>] ? ring_buffer_unlock_commit+0x22/0x1e0
+[14094.640023]  [<c1087f49>] ? update_curr+0x9/0x1e0
+[14094.640023]  [<c1087f49>] ? update_curr+0x9/0x1e0
+[14094.640023]  [<c108a3a8>] ? enqueue_entity+0x38/0xe20
+[14094.640023]  [<c10ecb16>] ftrace_ops_list_func+0xe6/0x100
+[14094.640023]  [<c165252b>] ftrace_call+0x5/0xb
+[14094.640023]  [<c1087f4e>] ? update_curr+0xe/0x1e0
+[14094.640023]  [<c108a379>] ? enqueue_entity+0x9/0xe20
+[14094.640023]  [<c108b1d7>] ? enqueue_task_fair+0x47/0x7e0
+[14094.640023]  [<c10410b7>] ? prepare_ftrace_return+0x77/0xa0
+[14094.640023]  [<c108a379>] ? enqueue_entity+0x9/0xe20
+[14094.640023]  [<c108a3a8>] enqueue_entity+0x38/0xe20
+[14094.640023]  [<c11013d0>] ? ftrace_push_return_trace+0x50/0x140
+[14094.640023]  [<c107b545>] ? enqueue_task+0x45/0x70
+[14094.640023]  [<c108b199>] ? enqueue_task_fair+0x9/0x7e0
+[14094.640023]  [<c107b545>] ? enqueue_task+0x45/0x70
+[14094.640023]  [<c10410b7>] ? prepare_ftrace_return+0x77/0xa0
+[14094.640023]  [<c108b199>] ? enqueue_task_fair+0x9/0x7e0
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c107b509>] ? enqueue_task+0x9/0x70
+[14094.640023]  [<c10410b7>] ? prepare_ftrace_return+0x77/0xa0
+[14094.640023]  [<c107b509>] ? enqueue_task+0x9/0x70
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c1112b45>] irq_work_run+0x15/0x30
+[14094.640023]  [<c1061d8e>] update_process_times+0x4e/0x60
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c10bc160>] ? tick_sched_handle.isra.12+0x60/0x60
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c11013d0>] ? ftrace_push_return_trace+0x50/0x140
+[14094.640023]  [<c16526d3>] ? smp_apic_timer_interrupt+0x33/0x50
+[14094.640023]  [<c130cb45>] ? memset+0x5/0x20
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c130cb45>] ? memset+0x5/0x20
+[14094.640023]  [<c130cb45>] ? memset+0x5/0x20
+[14094.640023]  [<c1101708>] ? trace_graph_entry+0x48/0x1d0
+[14094.640023]  [<c1016318>] ? sched_clock+0x8/0x10
+[14094.640023]  [<c130cb45>] ? memset+0x5/0x20
+[14094.640023]  [<f969e5ad>] ? osl_memset+0xd/0x10 [wl]
+[14094.640023]  [<c10ec9f0>] ftrace_graph_entry_test+0x20/0x30
+[14094.640023]  [<c1041090>] prepare_ftrace_return+0x50/0xa0
+[14094.640023]  [<c10ecb16>] ? ftrace_ops_list_func+0xe6/0x100
+[14094.640023]  [<c130cb45>] ? memset+0x5/0x20
+[14094.640023]  [<c16525bd>] ftrace_graph_caller+0x15/0x19
+[14094.640023]  [<c130cb4a>] ? memset+0xa/0x20
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<f957922c>] wlc_phytxctl1_calc+0x2193/0x311b [wl]
+[14094.640023]  [<c10eb9f8>] ? trace_clock_local+0x8/0x10
+[14094.640023]  [<c10f1bd2>] ? rb_reserve_next_event.isra.41+0x42/0x420
+[14094.640023]  [<c1016318>] ? sched_clock+0x8/0x10
+[14094.640023]  [<c10eb9f8>] ? trace_clock_local+0x8/0x10
+[14094.640023]  [<c1016318>] ? sched_clock+0x8/0x10
+[14094.640023]  [<c1016318>] ? sched_clock+0x8/0x10
+[14094.640023]  [<c10eb9f8>] ? trace_clock_local+0x8/0x10
+[14094.640023]  [<c10f1bd2>] ? rb_reserve_next_event.isra.41+0x42/0x420
+[14094.640023]  [<c110154a>] ? ftrace_return_to_handler+0x8a/0x160
+[14094.640023]  [<c10410b7>] ? prepare_ftrace_return+0x77/0xa0
+[14094.640023]  [<c130c986>] ? memcpy+0x6/0x30
+[14094.640023]  [<f969e5bd>] ? osl_memcpy+0xd/0x10 [wl]
+[14094.640023]  [<c130c986>] ? memcpy+0x6/0x30
+[14094.640023]  [<f957a827>] wlc_prep80211_raw+0x49a/0x6d4 [wl]
+[14094.640023]  [<c110154a>] ? ftrace_return_to_handler+0x8a/0x160
+[14094.640023]  [<f957b5c8>] wlc_prep_sdu+0x67f/0x7ea [wl]
+[14094.640023]  [<f9580b93>] wlc_send_q+0xbe/0x350 [wl]
+[14094.640023]  [<c110154a>] ? ftrace_return_to_handler+0x8a/0x160
+[14094.640023]  [<f957b988>] ? wlc_prec_enq_head+0x15f/0x18e [wl]
+[14094.640023]  [<f957b9c4>] ? wlc_prec_enq+0xd/0xdb [wl]
+[14094.640023]  [<f957ba03>] ? wlc_prec_enq+0x4c/0xdb [wl]
+[14094.640023]  [<f957b9c9>] ? wlc_prec_enq+0x12/0xdb [wl]
+[14094.640023]  [<f9589102>] wlc_sendpkt+0x2ed/0x377 [wl]
+[14094.640023]  [<f969f2d4>] wl_start_int.isra.9+0x44/0x70 [wl]
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c159207a>] ? sch_direct_xmit+0x7a/0x190
+[14094.640023]  [<c164a2f5>] ? _raw_spin_lock+0x5/0x50
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c15794e3>] ? dev_queue_xmit+0x3/0x20
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c15b91f3>] ? tcp_init_cwnd+0x3/0x50
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c15bd3e9>] ? tcp_set_skb_tso_segs+0x9/0xb0
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c15bfa76>] ? tcp_push_one+0x6/0x40
+[14094.640023]  [<c15b23ff>] ? tcp_sendmsg+0x3cf/0xb80
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c15622ae>] ? sock_sendmsg+0x6e/0x90
+[14094.640023]  [<c15622ae>] ? sock_sendmsg+0x6e/0x90
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c156dd2d>] ? verify_iovec+0x4d/0xc0
+[14094.640023]  [<c130d3d5>] ? _copy_from_user+0x5/0x50
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c10f2cf2>] ? ring_buffer_unlock_commit+0x22/0x1e0
+[14094.640023]  [<c10f89a0>] ? __buffer_unlock_commit+0x10/0x20
+[14094.640023]  [<c1101941>] ? __trace_graph_return+0x91/0xa0
+[14094.640023]  [<c110154a>] ? ftrace_return_to_handler+0x8a/0x160
+[14094.640023]  [<c130d40b>] ? _copy_from_user+0x3b/0x50
+[14094.640023]  [<c130d026>] ? __copy_from_user_ll+0x6/0xe0
+[14094.640023]  [<c1560605>] ? copy_msghdr_from_user+0x15/0x50
+[14094.640023]  [<c130d3d5>] ? _copy_from_user+0x5/0x50
+[14094.640023]  [<c156317d>] ? __sys_sendmsg+0x2d/0x80
+[14094.640023]  [<c15605f4>] ? copy_msghdr_from_user+0x4/0x50
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c10f1bd2>] ? rb_reserve_next_event.isra.41+0x42/0x420
+[14094.640023]  [<c10f1bd2>] ? rb_reserve_next_event.isra.41+0x42/0x420
+[14094.640023]  [<c10f2cf2>] ? ring_buffer_unlock_commit+0x22/0x1e0
+[14094.640023]  [<c1016318>] ? sched_clock+0x8/0x10
+[14094.640023]  [<c10eb9f8>] ? trace_clock_local+0x8/0x10
+[14094.640023]  [<c10f1bd2>] ? rb_reserve_next_event.isra.41+0x42/0x420
+[14094.640023]  [<c10f89a0>] ? __buffer_unlock_commit+0x10/0x20
+[14094.640023]  [<c10f2cf2>] ? ring_buffer_unlock_commit+0x22/0x1e0
+[14094.640023]  [<c1563f93>] ? SyS_socketcall+0x3/0x20
+[14094.640023]  [<c1651f58>] ? sysenter_do_call+0x12/0x28
+[14094.640023]  [<c1016318>] ? sched_clock+0x8/0x10
+[14094.640023]  [<c10eb9f8>] ? trace_clock_local+0x8/0x10
+[14094.640023]  [<c11013d0>] ? ftrace_push_return_trace+0x50/0x140
+[14094.640023]  [<c1651f58>] ? sysenter_do_call+0x12/0x28
+[14094.640023]  [<c1563f93>] ? SyS_socketcall+0x3/0x20
+[14094.640023]  [<c1651f58>] ? sysenter_do_call+0x12/0x28
+[14094.640023]  [<c10410b7>] ? prepare_ftrace_return+0x77/0xa0
+[14094.640023]  [<c1563fa3>] SyS_socketcall+0x13/0x20
+[14094.640023]  [<c16525c1>] ftrace_graph_caller+0x19/0x19
+[14094.640023]  [<c1640000>] ? rb_move_tail.isra.34+0x108/0x218
+[14094.640023] ===============DUMP STACK END================
+[14094.640023] +++++++++Compute stack_dump_index:++++++++++++
+[14094.640023] p == top, and found=1
+[14094.640023] p == top, and found=0
+[14094.640023] p == top, and found=1
+[14094.640023] p == top, and found=0
+[14094.640023] +++++++++End of compute stack_dump_index:++++++++++
+[14094.640023] ---------END OF check_stack------------
+[14094.640023] 0 - func:update_curr+0xe/0x1e0 - index:3572
+[14094.640023] 1 - func:ftrace_call+0x5/0xb - index:3572
+[14094.640023] 2 - func:enqueue_entity+0x38/0xe20 - index:3504
+[14094.640023] 3 - func:return_to_handler+0x0/0xf - index:3412
+[14094.640023] 4 - func:return_to_handler+0x0/0xf - index:3332
+[14094.640023] 5 - func:return_to_handler+0x0/0xf - index:3304
+[14094.640023] 6 - func:return_to_handler+0x0/0xf - index:3292
+[14094.640023] 7 - func:return_to_handler+0x0/0xf - index:3276
+[14094.640023] 8 - func:return_to_handler+0x0/0xf - index:3232
+[14094.640023] 9 - func:return_to_handler+0x0/0xf - index:3224
+[14094.640023] 10 - func:return_to_handler+0x0/0xf - index:3204
+[14094.640023] 11 - func:return_to_handler+0x0/0xf - index:3168
+[14094.640023] 12 - func:return_to_handler+0x0/0xf - index:3136
+[14094.640023] 13 - func:return_to_handler+0x0/0xf - index:3116
+[14094.640023] 14 - func:irq_work_run+0x15/0x30 - index:3092
+[14094.640023] 15 - func:update_process_times+0x4e/0x60 - index:3084
+[14094.640023] 16 - func:return_to_handler+0x0/0xf - index:3064
+[14094.640023] 17 - func:return_to_handler+0x0/0xf - index:3048
+[14094.640023] 18 - func:return_to_handler+0x0/0xf - index:3016
+[14094.640023] 19 - func:return_to_handler+0x0/0xf - index:2968
+[14094.640023] 20 - func:return_to_handler+0x0/0xf - index:2876
+[14094.640023] 21 - func:return_to_handler+0x0/0xf - index:2856
+[14094.640023] 22 - func:return_to_handler+0x0/0xf - index:2844
+[14094.640023] 23 - func:ftrace_graph_entry_test+0x20/0x30 - index:2756
+[14094.640023] 24 - func:prepare_ftrace_return+0x50/0xa0 - index:2744
+[14094.640023] 25 - func:ftrace_graph_caller+0x15/0x19 - index:2708
+[14094.640023] 26 - func:return_to_handler+0x0/0xf - index:2676
+[14094.640023] 27 - func:return_to_handler+0x0/0xf - index:2668
+[14094.640023] 28 - func:wlc_phytxctl1_calc+0x2193/0x311b [wl] - index:2644
+[14094.640023] 29 - func:wlc_prep80211_raw+0x49a/0x6d4 [wl] - index:2172
+[14094.640023] 30 - func:wlc_prep_sdu+0x67f/0x7ea [wl] - index:2016
+[14094.640023] 31 - func:wlc_send_q+0xbe/0x350 [wl] - index:1860
+[14094.640023] 32 - func:wlc_sendpkt+0x2ed/0x377 [wl] - index:1688
+[14094.640023] 33 - func:wl_start_int.isra.9+0x44/0x70 [wl] - index:1648
+[14094.640023] 34 - func:return_to_handler+0x0/0xf - index:1624
+[14094.640023] 35 - func:return_to_handler+0x0/0xf - index:1612
+[14094.640023] 36 - func:return_to_handler+0x0/0xf - index:1552
+[14094.640023] 37 - func:return_to_handler+0x0/0xf - index:1512
+[14094.640023] 38 - func:return_to_handler+0x0/0xf - index:1460
+[14094.640023] 39 - func:return_to_handler+0x0/0xf - index:1452
+[14094.640023] 40 - func:return_to_handler+0x0/0xf - index:1408
+[14094.640023] 41 - func:return_to_handler+0x0/0xf - index:1368
+[14094.640023] 42 - func:return_to_handler+0x0/0xf - index:1356
+[14094.640023] 43 - func:return_to_handler+0x0/0xf - index:1300
+[14094.640023] 44 - func:return_to_handler+0x0/0xf - index:1224
+[14094.640023] 45 - func:return_to_handler+0x0/0xf - index:1144
+[14094.640023] 46 - func:return_to_handler+0x0/0xf - index:1128
+[14094.640023] 47 - func:return_to_handler+0x0/0xf - index:984
+[14094.640023] 48 - func:return_to_handler+0x0/0xf - index:952
+[14094.640023] 49 - func:return_to_handler+0x0/0xf - index:808
+[14094.640023] 50 - func:return_to_handler+0x0/0xf - index:536
+[14094.640023] 51 - func:return_to_handler+0x0/0xf - index:476
+[14094.640023] 52 - func:SyS_socketcall+0x13/0x20 - index:88
+[14094.640023] 53 - func:return_to_handler+0x0/0xf - index:80
+[14094.640023] 54 - func:0xffffffff - index:80
+[14094.640023] ---------------------------------------

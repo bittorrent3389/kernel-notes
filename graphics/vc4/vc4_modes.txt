@@ -1,0 +1,22 @@
+一个connector支持的显示模式在内核里用drm_display_mode来表示，挂在drm_connector结构
+的modes队列中，对于vc4来说，drm_display_mode结构的创建与挂入队列通过下面的流程完成：
+
+vc4_drm_load
+	|_vc4_modeset_init
+		|_drm_fbdev_cma_init
+			|_drm_fb_helper_initial_config
+				|_drm_fb_helper_probe_connector_modes
+					|_fill_modes->drm_helper_probe_single_connector_modes
+								|
+	________________________________________________________|
+       |
+       |_get_modes->vc4_connector_get_modes
+       			|_drm_gtf_mode
+
+还有一个位置有可能调用fill_modes->drm_helper_probe_single_connector_modes进而创建mode，即
+drm_mode_getconnector
+	|_connector->funcs->fill_modes()
+
+而对应这里已经创建mode的情况，会在drm_helper_probe_single_connector_modes，进而在
+drm_mode_connector_list_update里通过drm_mode_equal找到已有的mode，而把新创建的，尚
+在connector->probed_modes里的mode删除掉。

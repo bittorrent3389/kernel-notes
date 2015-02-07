@@ -1,0 +1,44 @@
+Initialization of ggtt:
+i915_driver_load
+	|_i915_load_modeset_init
+		|_i915_gem_init
+			|_i915_gem_init_global_gtt
+				|_i915_gem_setup_global_gtt
+					|_drm_mm_init(&ggtt_vm->mm, start, end - start - PAGE_SIZE);
+
+i915_gem_obj_ggtt_pin
+	|_i915_gem_object_pin
+		|_i915_gem_obj_to_vma
+		|_i915_gem_object_bind_to_vm
+			|_i915_gem_object_get_pages
+				|_ops->get_pages(obj);
+				  //通过shmem_read_mapping_page_gfp分配内存页，再组成scatterlist表（sg_table)，保存在obj->pages里。
+				  i915_gem_object_get_pages_gtt
+					|_st = kmalloc(sizeof(*st), GFP_KERNEL);
+					|_sg_alloc_table
+					|_shmem_read_mapping_page_gfp
+					|_sg_set_page
+					|_obj->pages = st;
+			|_i915_gem_object_pin_pages
+			|_i915_gem_obj_lookup_or_create_vma
+			|_drm_mm_insert_node_in_range_generic
+			|_vma->bind_vma()
+			  ggtt_bind_vma
+				|_vma->vm->insert_entries(vma->vm, obj->pages, vma->node.start, cache_level, flags);
+				  gen6_ggtt_insert_entries
+
+i915的三个zone中：
+pci 0000:00:02.0: reg 0x10: [mem 0xf3400000-0xf37fffff 64bit]
+pci 0000:00:02.0: reg 0x18: [mem 0xd0000000-0xdfffffff 64bit pref]
+pci 0000:00:02.0: reg 0x20: [io  0xf000-0xf03f]
+
+第一个区间即gtt区间，用于设置gtt，指向分配的到的系统内存页。实际上对应了整个i915_address_space base 
+的地址空间，空间大小为2G。这个空间通过gen6_gmch_probe来获取。
+
+第二个区间即为mappable area，即显卡2G地址空间中可以由CPU映射的区间，
+对应显卡空间中0到gtt->mappable_end 的空间。
+CPU要对这个显卡空间进行映射时就可以通过这个PCI空间来进行，如
+i915_gem_fault:
+pfn = dev_priv->gtt.mappable_base + i915_gem_obj_ggtt_offset(obj);
+pfn >>= PAGE_SHIFT;
+这个区间通过ggtt_probe_common来获取。

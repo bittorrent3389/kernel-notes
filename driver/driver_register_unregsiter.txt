@@ -1,0 +1,96 @@
+driver_register()
+driver_register()-->bus_add_driver()
+			   |_ bus = bus_get(drv->bus);
+			   |_kobject_init_and_add()
+			   |_driver_attach()
+bus_get()获得bus，kobject_init_and_add()初始化相应的kobject并在sysfs中添加相应目录，driver_attach()遍历这个bus上已经注册的device，并进行match与probe:
+drivers/base/dd.c
+int driver_attach(struct device_driver *drv)
+{
+ return bus_for_each_dev(drv->bus, NULL, drv, __driver_attach);
+}
+EXPORT_SYMBOL_GPL(driver_attach);
+
+static int __driver_attach(struct device *dev, void *data)
+{
+... ...
+ if (!driver_match_device(drv, dev))
+ return 0;
+
+ if (dev->parent) /* Needed for USB */
+     device_lock(dev->parent);
+ device_lock(dev);
+ if (!dev->driver)
+     driver_probe_device(drv, dev);
+ device_unlock(dev);
+ if (dev->parent)
+ device_unlock(dev->parent);
+... ...
+}
+
+driver_probe_device()-->
+static int really_probe(struct device *dev, struct device_driver *drv)
+{
+... ...
+ if (dev->bus->probe) {
+     ret = dev->bus->probe(dev);
+     if (ret)
+         goto probe_failed;
+ } else if (drv->probe) {
+     ret = drv->probe(dev);
+     if (ret)
+         goto probe_failed;
+ }
+... ...
+}
+从really_probe()可以看出，probe时，先尝试bus的probe函数，再尝试driver的probe函数。
+
+------------------------------------------------------------------------------------------
+............................................................................................................
+driver_unregister()
+drivers/base/driver.c
+driver_unregister()-->bus_remove_driver
+drivers/base/bus.c
+bus_remove_driver-->driver_detach()
+drivers/base/dd.c
+driver_detach()-->__device_release_driver()
+			      |_dev->bus->remove(dev); / drv->remove(dev);
+			      |_ dev->driver = NULL;
+对于pci设备：
+pci/pci-driver.c
+struct bus_type pci_bus_type = {
+ .name = "pci",
+ .probe = pci_device_probe,
+ .remove = pci_device_remove,
+... ...
+};
+
+static int pci_device_remove(struct device * dev)
+{
+ if (drv) {
+     if (drv->remove) {
+         pm_runtime_get_sync(dev);
+         drv->remove(pci_dev);
+         pm_runtime_put_noidle(dev);
+     }
+ pci_dev->driver = NULL;
+ }
+
+ pci_dev_put(pci_dev);
+ return 0;
+}
+
+void pci_dev_put(struct pci_dev *dev)
+{
+     if (dev)
+         put_device(&dev->dev);
+}
+当pci device的引用计数为0时，put_device()就会调用相应device的release，即
+pci_release_dev() (drivers/pci/probe.c)
+这也就是ldd3 397页所说的
+“It then iterates over all devices that were attached to this driver and calls the release func-
+tion for it. This happens exactly like the previously mentioned release function for when a device is removed from the system.”
+的意思。
+
+至于ldd3同一页下面说的down(&drv->unload_sem)与up(&drv->unload_sem)，则只在早期内核里才有，见
+http://lxr.oss.org.cn/source/drivers/base/driver.c?v=2.6.8#L89

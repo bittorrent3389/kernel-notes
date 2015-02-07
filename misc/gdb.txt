@@ -1,0 +1,10 @@
+使用gdb attach到一个程序中时[(gdb)attach pid]，目标程序会暂时中断在：
+0xb77d4424 in __kernel_vsyscall () （定义于arch/x86/vdso/vdso32/int80.S）
+
+这种中断状态是显示(gdb)命令行的，这时输入c可以使程序继续运行，这时(gdb)命令行消失，ctrl-c后程序两次被中断，回到(gdb)命令行。
+
+比如调度nweb程序时，attach到nweb程序后，从浏览器访问http://localhost:9090/不能成功加载，此时输入c后就能正常加载了，或者先输入c使nweb进入运行状态，再从浏览器访问。
+
+所以，在
+http://www.ibm.com/developerworks/aix/library/au-unix-strace.html?S_TACT=105AGX52&S_CMP=cn-a-aix
+中用gdb调度nweb的例子中，设置后断点，并设置好碰到断点时要执行的命令后，要运行c，使程序恢复运行状态。

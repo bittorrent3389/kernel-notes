@@ -1,0 +1,46 @@
+When the device is removed from the system:
+
+device_unregister()-->device_del()-->bus_remove_device()-->device_release_driver()
+-->__device_release_driver()
+
+static void __device_release_driver(struct device *dev)
+{
+        ... ...
+        if (dev->bus && dev->bus->remove)
+                dev->bus->remove(dev);
+        else if (drv->remove)
+                drv->remove(dev);
+        ... ...
+}
+就是说优先调用相应总线的remove，如果其没有remove，则调用相应driver的remove。
+如pci总线：
+struct bus_type pci_bus_type = {
+        ... ...
+        .remove = pci_device_remove,
+        ... ...
+};
+pci_device_remove()-->drv->remove(pci_dev);
+可见，最终调用到了相应driver的remove函数。并以相应设备结构指针为参数。因为同一时刻可能有多个
+device与这个driver绑定，所以driver的remove函数可能会被调用多次，每次以不同的device结构为参数。
+
+而具体driver的remove函数，则是具体的驱动向相应总线注册前自己准备的，这样就可以释放相应driver相关的数据，如
+drivers/pci/ioapic.c
+static struct pci_driver ioapic_driver = {
+        .name = "ioapic",
+        .... ...
+        .remove = ioapic_remove,
+};
+
+static int __init ioapic_init(void)
+{
+        return pci_register_driver(&ioapic_driver);
+}
+static void ioapic_remove(struct pci_dev *dev)
+{
+        struct ioapic *ioapic = pci_get_drvdata(dev);
+
+        acpi_unregister_ioapic(ioapic->handle, ioapic->gsi_base);
+        pci_release_region(dev, 0);
+        pci_disable_device(dev);
+        kfree(ioapic);
+}

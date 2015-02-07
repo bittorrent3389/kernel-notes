@@ -1,0 +1,44 @@
+内核模块也可以做ftrace，说明编译生成的模块里也有mcount调用。
+但在编译生成的内核模块中，虽然也有__mcount_loc段，但在objdump -d中
+并没有找到对mcount的调用，但存在相应的重定位位置，留待模块加载时
+重定位：
+
+wjx@wjx-IdeaPad-Y430:~/src/scratch/kernel_stack$ objdump -d hello.ko
+00000000 <stack_thread>:
+   0:	55                   	push   %ebp
+   1:	89 e5                	mov    %esp,%ebp
+   3:	83 ec 04             	sub    $0x4,%esp
+   6:	e8 fc ff ff ff       	call   7 <stack_thread+0x7>
+   ... ...
+
+00000030 <ss_read>:
+  30:	55                   	push   %ebp
+  31:	89 e5                	mov    %esp,%ebp
+  33:	57                   	push   %edi
+  34:	56                   	push   %esi
+  35:	53                   	push   %ebx
+  36:	83 ec 30             	sub    $0x30,%esp
+  39:	e8 fc ff ff ff       	call   3a <ss_read+0xa>
+  ... ...
+
+000000b0 <init_module>:
+  b0:	55                   	push   %ebp
+  b1:	89 e5                	mov    %esp,%ebp
+  b3:	83 ec 10             	sub    $0x10,%esp
+  b6:	e8 fc ff ff ff       	call   b7 <init_module+0x7>
+  ... ...
+
+00000160 <cleanup_module>:
+ 160:	55                   	push   %ebp
+ 161:	89 e5                	mov    %esp,%ebp
+ 163:	83 ec 04             	sub    $0x4,%esp
+ 166:	e8 fc ff ff ff       	call   167 <cleanup_module+0x7>
+ ... ...
+    其中下面这些位置：
+   6:	e8 fc ff ff ff       	call   7 <stack_thread+0x7>
+  39:	e8 fc ff ff ff       	call   3a <ss_read+0xa>
+  b6:	e8 fc ff ff ff       	call   b7 <init_module+0x7>
+  b6:	e8 fc ff ff ff       	call   b7 <init_module+0x7>
+ 166:	e8 fc ff ff ff       	call   167 <cleanup_module+0x7>
+    其实就是对mcount的调用，在模块加载时这些位置会被修正。可以看出这些位置都是相应函数
+的起始位置到当前调用加1的位置。

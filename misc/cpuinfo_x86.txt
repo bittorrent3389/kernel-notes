@@ -1,0 +1,45 @@
+struct cpuinfo_x86定义于arch/x86/include/asm/processor.h
+每个cpu都有一个此结构。
+
+首先boot cpu定义了一个boot_cpu_data:
+arch/x86/kernel/setup.c:
+
+/* cpu data as detected by the assembly code in head.S */
+struct cpuinfo_x86 new_cpu_data = {
+	.wp_works_ok = -1,
+};
+/* common cpu data for all cpus */
+struct cpuinfo_x86 boot_cpu_data __read_mostly = {
+	.wp_works_ok = -1,
+};
+EXPORT_SYMBOL(boot_cpu_data);
+
+其次，每个cpu的cpuinfo_x86存在于一个per cpu变量中：
+arch/x86/include/asm/processor.h
+
+#ifdef CONFIG_SMP
+DECLARE_PER_CPU_SHARED_ALIGNED(struct cpuinfo_x86, cpu_info);
+#define cpu_data(cpu)		per_cpu(cpu_info, cpu)
+#else
+#define cpu_info		boot_cpu_data
+#define cpu_data(cpu)		boot_cpu_data
+#endif
+
+初始化：
+=======
+boot_cpu_data:
+--------------
+check_bugs				arch/x86/kernel/cpu/bugs.c
+	|
+	|__identify_boot_cpu()		arch/x86/kernel/cpu/common.c
+		|__identify_cpu(&boot_cpu_data);
+
+cpu_data:
+---------
+start_secondary
+	|
+smp_callin
+	|__smp_store_cpu_info
+		|
+		identify_secondary_cpu
+			|__identify_cpu(c);

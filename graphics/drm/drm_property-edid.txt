@@ -1,0 +1,4 @@
+EDID property:
+drm_mode_config_init
+	|_drm_mode_create_standard_connector_properties
+		|_drm_property_create

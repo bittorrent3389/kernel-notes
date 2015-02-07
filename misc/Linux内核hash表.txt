@@ -1,0 +1,16 @@
+2.4.0 内核中，为了通过进程号pid快速找到task_struct结构，设立了hash表：
+extern struct task_struct *pidhash[PIDHASH_SZ];
+#define pid_hashfn(x) ((((x) >> 8) ^ (x)) & (PIDHASH_SZ - 1))
+hash表大小PIDHASH_SZ为1024，通过hash函数pid_hashfn将pid映射成0 － PIDHASH_SZ - 1，即pidhash中一某一项。
+
+--
+
+2.4.0 user_struct的hash表，可以根据uid快速找到user_struct结构：
+#define UIDHASH_BITS  8
+#define UIDHASH_SZ  (1 << UIDHASH_BITS)
+#define UIDHASH_MASK  (UIDHASH_SZ - 1)
+#define __uidhashfn(uid) (((uid >> UIDHASH_BITS) ^ uid) & UIDHASH_MASK)
+#define uidhashentry(uid) (uidhash_table + __uidhashfn(uid))
+
+static struct user_struct *uidhash_table[UIDHASH_SZ];
+static spinlock_t uidhash_lock = SPIN_LOCK_UNLOCKED;

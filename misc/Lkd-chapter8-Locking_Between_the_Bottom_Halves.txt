@@ -1,0 +1,8 @@
+Lkd第八章Locking Between the Bottom Halves里说
+If process context code and a bottom half share data, you need to disable bottom-half 
+processing and obtain a lock before accessing the data. Doing both ensures local and 
+SMP protection and prevents a deadlock.
+说的死锁情况是指只加了锁，却没有关softirq的情况，这时如果带锁的情况下发生中断，
+如果直接在中断返回路径上处理softirq，则可能死锁如果softirq都是由ksoftirqd来完成，
+则这种情况下也不会死锁，因为即使发生中断，invoke_softirq里也只是唤醒ksoftirqd，因为持有锁，
+这时并不会发生抢占，也就不会发生死锁。需要等到放弃锁时才可能抢占。

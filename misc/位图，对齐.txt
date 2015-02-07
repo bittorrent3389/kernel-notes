@@ -1,0 +1,25 @@
+Linux-2.4.0
+mm/bootmem.c
+
+static unsigned long __init init_bootmem_core (pg_data_t *pgdat,
+unsigned long mapstart, unsigned long start, unsigned long end)
+{
+    bootmem_data_t *bdata = pgdat->bdata;
+    unsigned long mapsize = ((end - start)+7)/8;         //end-start 为总物理页数，这里计算出位图需要多少个字节。
+
+    pgdat->node_next = pgdat_list;
+    pgdat_list = pgdat;
+
+    mapsize = (mapsize + (sizeof(long) - 1UL)) & ~(sizeof(long) - 1UL);         //位图的大小要4字节对齐
+    bdata->node_bootmem_map = phys_to_virt(mapstart << PAGE_SHIFT);
+    bdata->node_boot_start = (start << PAGE_SHIFT);
+    bdata->node_low_pfn = end;
+
+    /*
+    * Initially all pages are reserved - setup_arch() has to
+    * register free RAM areas explicitly.
+    */
+   memset(bdata->node_bootmem_map, 0xff, mapsize);
+
+    return mapsize;
+}

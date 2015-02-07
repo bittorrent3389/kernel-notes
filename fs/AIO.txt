@@ -1,0 +1,120 @@
+Ref:
+http://hi.baidu.com/_kouu/item/2b3cfecd49c17d10515058d9
+
+http://lenky.info/archives/2013/01/09/2183
+
+因为存放aio结果(io_event结构)的内存是在用户空间，所以这里要在用户空间分配虚拟空间并分配内存页，这里用到的direct IO里用到的get_user_pages()，这些是io_setup分配struct kioctx结构时完成的：
+
+io_setup-->ioctx_alloc-->aio_setup_ring
+
+static int aio_setup_ring(struct kioctx *ctx)
+{
+ struct aio_ring *ring;
+ struct aio_ring_info *info = &ctx->ring_info;
+ unsigned nr_events = ctx->max_reqs;
+ unsigned long size;
+ int nr_pages;
+
+ /* Compensate for the ring buffer's head/tail overlap entry */
+ nr_events += 2; /* 1 is required, 2 for good luck */
+
+ size = sizeof(struct aio_ring);
+ size += sizeof(struct io_event) * nr_events;
+ nr_pages = (size + PAGE_SIZE-1) >> PAGE_SHIFT;
+
+ if (nr_pages < 0)
+ return -EINVAL;
+
+ nr_events = (PAGE_SIZE * nr_pages - sizeof(struct aio_ring)) / sizeof(struct io_event);
+
+ info->nr = 0;
+ info->ring_pages = info->internal_pages;
+ if (nr_pages > AIO_RING_PAGES) {
+        //wjx:这里只是分配page结构指针数组，真正分配物理页并得到page指针是通过下面get_user_pages来完成的
+ info->ring_pages = kcalloc(nr_pages, sizeof(struct page *), GFP_KERNEL);
+ if (!info->ring_pages)
+ return -ENOMEM;
+ }
+
+
+ info->mmap_size = nr_pages * PAGE_SIZE;
+ dprintk("attempting mmap of %lu bytes\n", info->mmap_size);
+ down_write(&ctx->mm->mmap_sem);
+    //wjx:在用户空间取得一块虚存空间
+ info->mmap_base = do_mmap_pgoff(NULL, 0, info->mmap_size, 
+ PROT_READ|PROT_WRITE,
+ MAP_ANONYMOUS|MAP_PRIVATE, 0);
+ if (IS_ERR((void *)info->mmap_base)) {
+ up_write(&ctx->mm->mmap_sem);
+ info->mmap_size = 0;
+ aio_free_ring(ctx);
+ return -EAGAIN;
+ }
+
+
+ dprintk("mmap address: 0x%08lx\n", info->mmap_base);
+    //wjx:将上面取得的虚存空间映射到物理页。并将相应的page结构指针填充到ring_pages里。
+ info->nr_pages = get_user_pages(current, ctx->mm,
+ info->mmap_base, nr_pages, 
+ 1, 0, info->ring_pages, NULL);
+ up_write(&ctx->mm->mmap_sem);
+
+
+ if (unlikely(info->nr_pages != nr_pages)) {
+ aio_free_ring(ctx);
+ return -EAGAIN;
+ }
+
+ ctx->user_id = info->mmap_base;
+
+ info->nr = nr_events; /* trusted copy */
+
+ ring = kmap_atomic(info->ring_pages[0]);
+ ring->nr = nr_events; /* user copy */
+ ring->id = ctx->user_id;
+ ring->head = ring->tail = 0;
+ ring->magic = AIO_RING_MAGIC;
+ ring->compat_features = AIO_RING_COMPAT_FEATURES;
+ ring->incompat_features = AIO_RING_INCOMPAT_FEATURES;
+ ring->header_length = sizeof(struct aio_ring);
+ kunmap_atomic(ring);
+
+
+ return 0;
+}
+在用户空间分开的空间里包含一个struct aio_ring结构后加若干个struct io_event结构。
+ctx->user_id = info->mmap_base即是此区间在用户空间的地址。
+
+=====================================================
+=====================================================
+        We cover asynchronous I/O in this chapter, because
+its implementation almost always involves direct I/O operations as well (if you are
+buffering data in the kernel, you can usually implement asynchronous behavior with-
+out imposing the added complexity on user space).
+         AIO一定对应着direct-IO（原因如上，不通过内核缓冲就算direct-IO，包括下面的字符设备），也就是说要直接操作用户空间的缓存而不经过内核缓存。
+        对于字符设备，因为自己会实现aio_read，所以在自己的aio_read里要通过get_user_pages或
+get_user_pages_fast将用户空间的内存iocb->aio_buf映射到内核中，以给驱动在异步操作完成时通过中断函数将数据写回用户空间的aio->buf。
+        而对于块设备／文件来说，非direct-IO没有意义，direct-IO的情况下，
+ .aio_read = generic_file_aio_read,
+generic_file_aio_read-->mapping->a_ops->direct_IO()
+  .direct_IO = blkdev_direct_IO,
+blkdev_direct_IO-->__blockdev_direct_IO-->do_direct_IO()-->dio_get_page()-->dio_refill_pages()
+-->get_user_pages_fast()
+
+
+一个字符设备AIO的例子，在ldd3，scullp的AIO例子中，
+scullp_aio_read()-->scullp_defer_op()-->scullp_read/scullp_write
+直接将数据通过copy_to_user或copy_from_user拷贝到用户空间了，而没有将用户空间的缓存通过get_user_pages()映射到内核里。
+
+在实际的异步中，因为可能不会马上就有数据，所以不能通过copy_to_user这种方法马上拷贝数据，同时，也不能通过暂时保存用户空间地址，待设备操作完成时来copy_to_user，因为是异步操作，所以等操作完成时当前进程可能是其它进程了，所以不能用这种方法。而要通过get_user_pages()把用户空间地址先映射到内核空间，等异步操作完成时再访问，这就是ldd3中说的：（P439）
+“Remem-bering the operation information includes arranging access to the user-space buffer”
+
+注意，这里说的映射用户空间地址和前面aio_setup_ring里在用户空间分配区间不同，那里分配空间是为了保存
+io_event结构之用（aio_complete来填充）。而这里映射的用户空间对应的是用户为异步准备下的空间，对应
+include/uapi/linux/aio_abi.h
+struct iocb结构里的aio_buf（实际是分成了一些iovec结构）。
+
+实际的驱动中，这是通过对iovec进行映射来完成的。如
+drivers/net/tun.c
+tun_chr_aio_write()-->tun_get_user()-->zerocopy_sg_from_iovec()-->get_user_pages_fast()
+( base = (unsigned long)from->iov_base + offset;)

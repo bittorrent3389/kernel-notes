@@ -1,0 +1,82 @@
+HAVE_DYNAMIC_FTRACE + HAVE_FUNCTION_GRAPH_TRACER
+静态function graph tracer
+=========================
+    静态function graph tracer时的mcount是与function tracer时的mcount是共用的:
+
+ENTRY(mcount)
+	cmpl $__PAGE_OFFSET, %esp
+	jb ftrace_stub		/* Paging not enabled yet? */
+
+	cmpl $0, function_trace_stop
+	jne  ftrace_stub
+
+	cmpl $ftrace_stub, ftrace_trace_function
+	jnz trace
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+	cmpl $ftrace_stub, ftrace_graph_return
+	jnz ftrace_graph_caller
+
+	cmpl $ftrace_graph_entry_stub, ftrace_graph_entry
+	jnz ftrace_graph_caller
+#endif
+    正如ftrace-design.txt所说：
+
+The mcount function should check the function pointers ftrace_graph_return
+(compare to ftrace_stub) and ftrace_graph_entry (compare to
+ftrace_graph_entry_stub).  If either of those is not set to the relevant stub
+function, call the arch-specific function ftrace_graph_caller which in turn
+calls the arch-specific function prepare_ftrace_return.  
+
+    调用prepare_ftrace_return()的第一个参数为一个指向栈上的所trace函数的返回地址的
+指针，比如foo()->bar()->mcount()，则第一个参数则为指向栈上bar()返回地址的指针，这样
+就可以在prepare_ftrace_return()里修改bar()的返回地址为return_to_handler()(原有地址保存在
+current->ret_stack中)，在bar()返回时就会调用到return_to_handler，这样就可以做一些统计，
+比如统计函数执行的时间。
+    但是最终还是要返回到原始的bar()的返回地址，而这个地址是通过调用ftrace_return_to_handler 
+从current->ret_stack得到的，只要jmp过去就行了：jmp *%ecx
+
+The arguments to prepare_ftrace_return are slightly different than what are
+passed to ftrace_trace_function.  The second argument "selfpc" is the same,
+but the first argument should be a pointer to the "frompc".  Typically this is
+located on the stack.  This allows the function to hijack the return address
+temporarily to have it point to the arch-specific function return_to_handler.
+That function will simply call the common ftrace_return_to_handler function and
+that will return the original return address with which you can return to the
+original call site.
+
+动态function graph tracer
+=========================
+
+    与动态ftrace相同，动态ftrace并使用function graph tracer时，mcount也是会被替换为对ftrace_caller的
+调用，只是在启用CONFIG_FUNCTION_GRAPH_TRACER时，ftrace_caller里会有一个调用位置ftrace_graph_call。
+ftrace_enable_ftrace_graph_caller()会在运行时将ftrace_graph_call 位置修改为对ftrace_graph_caller()
+的调用，而ftrace_graph_caller则和静态function graph tracer里做的相同了，即调用prepare_ftrace_return。
+详见ftrace-design.txt。
+    
+Trace Stack
+===========
+    prepare_ftrace_return里对函数返回地址时行修改后，会将函数的真实返回地址保存到trace stack中
+(task_struct->ret_stack)，这是通过ftrace_push_return_trace()来完成的。ret_stack是一个ftrace_ret_stack
+结构的数组，大小为FTRACE_RETFUNC_DEPTH，在ftrace_graph_init_task里分配。FTRACE_RETFUNC_DEPTH在
+include/linux/ftrace.h中定义为50。所以当保存的返回地址多于这个数量时，ftrace_push_return_trace()
+就会返回-EBUSY，这样被trace函数的返回地址就会被修改回原地址：*parent = old;
+
+
+解释kernel/trace/trace_stack.c里
+================================
+	/*
+     * //wjx:什么情况下在栈上不存在？
+     * //LKML:https://lkml.org/lkml/2008/12/3/197
+	 * Loop through all the entries. One of the entries may
+	 * for some reason be missed on the stack, so we may
+	 * have to account for them. If they are all there, this
+	 * loop will only happen once. This code only takes place
+	 * on a new max, so it is far from a fast path.
+	 */
+    在使用function graph tracer时，一些函数的返回地址会被替换成return_to_handler，但是在记录stack trace
+时，会将函数真实的返回地址也记录在stack_dump_trace里，作为stack_dump_trace里return_to_handler的下一项，这
+是通过arch/x86/kernel/dumpstack.c里print_context_stack()-->print_ftrace_graph_addr()-->
+ops->address(data, ret_addr, 1);来完成的。所以这些真实的返回地址在栈上是没有的，所以在stack_dump_index
+里这些地址对应的项会保存与前面return_to_handler项相同的值。但因为在stack_trace文件的输出是通过
+stack_dump_index[i] - stack_dump_index[i+1];来计算的，所以return_to_handler项计算出的结果是0，其下面真实地址
+对应的项的值是实际占用的栈大小。

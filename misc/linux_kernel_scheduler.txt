@@ -1,0 +1,15 @@
+每个cpu的runqueue由数据结构struct rq来表示，定义在kernel/sched/sched.h中:
+DECLARE_PER_CPU(struct rq, runqueues);
+获取当前cpu上rq结构的方法，__schedule()中的例子：
+ cpu = smp_processor_id();
+ rq = cpu_rq(cpu);
+
+
+struct rq中包括了两个数据结构：struct cfs_rq和struct rt_rq，具体的进程挂在这两个数据结构中。
+同时，struct rt_rq和struct cfs_rq中还有指向其struct rq的指针。
+
+比如，每个cpu上使用cfs调度策略的普通进程，通过其task_struct结构中的sched_entity结构，挂在
+struct cfs_rq结构的红黑树struct rb_root tasks_timeline;中。
+其中sched_entity是通过其成员run_node挂在 tasks_timeline中。
+
+cfs_rq->rb_leftmost缓存了红黑树的leftmost结点。

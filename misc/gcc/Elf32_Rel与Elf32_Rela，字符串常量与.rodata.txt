@@ -1,0 +1,107 @@
+        在计算重定位后的地址的过程中可能需要一个加数(addend)，比如R_386_32的S+A与一R_386_PC32的S+A-P，这里的A就是所需要的addend，这个数可能保存在要修改的位置上（Elf32_Rel的情况），也可能保存在重定位表项里（Elf32_Rela里的r_addend域）：
+         As specified previously, only Elf32_Rela and Elf64_Rela entries contain an explicit addend. Entries of type Elf32_Rel and Elf64_Rel store an implicit addend in the location to be modified. Depending on the processor architecture, one form or the other might be necessary or more convenient. Consequently, an implementation for a particular machine may use one form exclusively or either form depending on context.
+       A relocation section references two other sections: a symbol table and a section to modify. The section header's sh_link and sh_info members, described in ``Sections'' above, specify these relationships.
+        而是否使用了Rela可以通过sh.sh_type == SHT_RELA来判断。
+        
+        对于引用字符串的情况下，重定位项对应的是对重定位入口.rodata的引用，也就是说重定位入口符号为“.rodata”，此符号所在的段rela->sym->sec为.rodata，此段的sec->sh.sh_flags中有标志SHF_STRINGS。此时重定位项所对应的字符串（如"abc"）存放在段.rodata里，偏移为rela->addend
+（在x86 cpu上这个偏移实际上保存在要修正的位置）。连接时将addend与.rodata相加就可以得到相应字符串的虚拟地址（将保存字符串的段[不是字符串表]读入内存后，也可以通过addend来索引找到相应的字符串），见：
+         https://github.com/dynup/kpatch/blob/master/kpatch-build/create-diff-object.c#L256
+         rela->string = rela->sym->sec->data->d_buf + rela->addend;
+
+        一个段里如果有SHF_STRINGS标志位则表示此段内保存字符串：
+     
+SHF_STRINGS
+The data elements in the section consist of null-terminated character strings. The size of each character is specified in the section header's sh_entsize field.
+Ref:
+http://www.sco.com/developers/gabi/2003-12-17/ch4.reloc.html
+http://www.sco.com/developers/gabi/2003-12-17/ch4.sheader.html
+
+举例：
+===
+    将下面的代码编译：
+//gcc -c str.c
+int main(int argc, const char *argv[])
+{
+    swap("aaa", "bbb");
+}
+
+    查看其重定位表：
+$readelf -r str.o
+
+Relocation section '.rel.text' at offset 0x3e4 contains 3 entries:
+ Offset     Info    Type            Sym.Value  Sym. Name
+0000000d  00000501 R_386_32          00000000   .rodata
+00000014  00000501 R_386_32          00000000   .rodata
+00000019  00000a02 R_386_PC32        00000000   swap
+    其中对"aaa"和"bbb"的引用就对应上面输出中的两个.rodata，也就是说换算成了对符号“.rodata”
+的重定位，其从中还可以看出其（.rodata）在符号表中的下标为5，查看符号表：
+$objdump -t str.o
+str.o:     file format elf32-i386
+SYMBOL TABLE:
+00000000 l    df *ABS*    00000000 str.c
+00000000 l    d  .text    00000000 .text
+00000000 l    d  .data    00000000 .data
+00000000 l    d  .bss    00000000 .bss
+00000000 l    d  .rodata    00000000 .rodata
+00000000 l    d  .note.GNU-stack    00000000 .note.GNU-stack
+00000000 l    d  .eh_frame    00000000 .eh_frame
+00000000 l    d  .comment    00000000 .comment
+00000000 g     F .text    0000001f main
+00000000         *UND*    00000000 swap
+
+$readelf -s str.o
+Symbol table '.symtab' contains 11 entries:
+   Num:    Value  Size Type    Bind   Vis      Ndx Name
+     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     1: 00000000     0 FILE    LOCAL  DEFAULT  ABS str.c
+     2: 00000000     0 SECTION LOCAL  DEFAULT    1 
+     3: 00000000     0 SECTION LOCAL  DEFAULT    3 
+     4: 00000000     0 SECTION LOCAL  DEFAULT    4 
+     5: 00000000     0 SECTION LOCAL  DEFAULT    5 
+     6: 00000000     0 SECTION LOCAL  DEFAULT    7 
+     7: 00000000     0 SECTION LOCAL  DEFAULT    8 
+     8: 00000000     0 SECTION LOCAL  DEFAULT    6 
+     9: 00000000    31 FUNC    GLOBAL DEFAULT    1 main
+    10: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND swap
+    可知符号".rodata"所在段的编号为5，也就是在.rodata段：
+$readelf -S str.o
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        00000000 000034 00001f 00  AX  0   0  1
+  [ 2] .rel.text         REL             00000000 0003e4 000018 08     11   1  4
+  [ 3] .data             PROGBITS        00000000 000053 000000 00  WA  0   0  1
+  [ 4] .bss              NOBITS          00000000 000053 000000 00  WA  0   0  1
+  [ 5] .rodata           PROGBITS        00000000 000053 000008 00   A  0   0  1
+  [ 6] .comment          PROGBITS        00000000 00005b 000025 01  MS  0   0  1
+  [ 7] .note.GNU-stack   PROGBITS        00000000 000080 000000 00      0   0  1
+  [ 8] .eh_frame         PROGBITS        00000000 000080 000038 00   A  0   0  4
+  [ 9] .rel.eh_frame     REL             00000000 0003fc 000008 08     11   8  4
+  [10] .shstrtab         STRTAB          00000000 0000b8 00005f 00      0   0  1
+  [11] .symtab           SYMTAB          00000000 000320 0000b0 10     12   9  4
+  [12] .strtab           STRTAB          00000000 0003d0 000011 00      0   0  1
+
+    通过$ objdump -r -D str.o还可以看到在根据符号“.rodata”来计算重定位位置的实际值时要使用
+的rela->addend保存在要修正的位置（x86 cpu上如此）：
+Disassembly of section .text:
+00000000 <main>:
+   0:    55                       push   %ebp
+   1:    89 e5                    mov    %esp,%ebp
+   3:    83 e4 f0                 and    $0xfffffff0,%esp
+   6:    83 ec 10                 sub    $0x10,%esp
+   9:    c7 44 24 04 00 00 00     movl   $0x0,0x4(%esp)    //"bbb"
+  10:    00 
+            d: R_386_32    .rodata
+  11:    c7 04 24 04 00 00 00     movl   $0x4,(%esp)    //"aaa"
+            14: R_386_32    .rodata
+  18:    e8 fc ff ff ff           call   19 <main+0x19>
+            19: R_386_PC32    swap
+  1d:    c9                       leave  
+  1e:    c3                       ret    
+00000000 <.rodata>:
+   0:    62 62 62                 bound  %esp,0x62(%edx)
+   3:    00 61 61                 add    %ah,0x61(%ecx)
+   6:    61                       popa   
+    ...
+     两个蓝色位置为对应“bbb”和“aaa”的修正位置，可以看到它们的第一个字节距.text段的开头的偏移
+分别为d和14，两个位置的当前值为0和4,分别对应"bbb"和"aaa"在.rodata段里的偏移。

@@ -1,0 +1,323 @@
+evolution of paravirt_ops
+=========================
+
+d3561b7fa0fb0fc583bab0eeda32bec9e4c4056d
+----------------------------------------
+[include/asm-i386/paravirt.h]
++static inline void raw_local_irq_enable(void)
++{
++       paravirt_ops.irq_enable();
++}
+
+
+139ec7c416248b9ea227d21839235344edfee1e0
+----------------------------------------
+[include/asm-i386/paravirt.h]
+
++       /*
++        * Patch may replace one of the defined code sequences with arbitrary
++        * code, subject to the same register constraints.  This generally
++        * means the code is not free to clobber any registers other than EAX.
++        * The patch function should return the number of bytes of code
++        * generated, as we nop pad the rest in generic code.
++        */
++       unsigned (*patch)(u8 type, u16 clobber, void *firstinsn, unsigned len);
+
++#define paravirt_alt(insn_string, typenum, clobber)    \
++       "771:\n\t" insn_string "\n" "772:\n"            \
++       ".pushsection .parainstructions,\"a\"\n"        \
++       "  .long 771b\n"                                \
++       "  .byte " __stringify(typenum) "\n"            \
++       "  .byte 772b-771b\n"                           \
++       "  .short " __stringify(clobber) "\n"           \
++       ".popsection"
+
++static inline void raw_local_irq_enable(void)
++{
++       __asm__ __volatile__(paravirt_alt( "pushl %%ecx; pushl %%edx;"
++                                          "call *%0;"
++                                          "popl %%edx; popl %%ecx",
++                                         PARAVIRT_IRQ_ENABLE, CLBR_EAX)
++                            : : "m" (paravirt_ops.irq_enable)
++                            : "memory", "eax", "cc");
++}
+
+f8822f42019eceed19cc6c0f985a489e17796ed8
+----------------------------------------
+Consistently wrap paravirt ops callsites to make them patchable
+Introduce PVOP_CALLxs
+
+d582203578a1f3d408e27bb9042e8635954cd320
+----------------------------------------
+Introduce PARAVIRT_CALL, paravirt_type, paravirt_clobber
+
+[include/asm-i386/paravirt.h]
+
++#define PARAVIRT_PATCH(x)                                      \
++       (offsetof(struct paravirt_ops, x) / sizeof(void *))
++
++#define paravirt_type(type)                                    \
++       [paravirt_typenum] "i" (PARAVIRT_PATCH(type))
++#define paravirt_clobber(clobber)              \
++       [paravirt_clobber] "i" (clobber)
++
++#define PARAVIRT_CALL  "call *paravirt_ops+%c[paravirt_typenum]*4;"
++
++#define _paravirt_alt(insn_string, type, clobber)      \
++       "771:\n\t" insn_string "\n" "772:\n"            \
++       ".pushsection .parainstructions,\"a\"\n"        \
++       "  .long 771b\n"                                \
++       "  .byte " type "\n"                            \
++       "  .byte 772b-771b\n"                           \
++       "  .short " clobber "\n"                        \
++       ".popsection\n"
++
++#define paravirt_alt(insn_string)                              \
++       _paravirt_alt(insn_string, "%c[paravirt_typenum]", "%c[paravirt_clobber]")
++
+
+ static inline void raw_local_irq_enable(void)
+ {
+-       __asm__ __volatile__(paravirt_alt( "pushl %%ecx; pushl %%edx;"
+-                                          "call *%0;"
+-                                          "popl %%edx; popl %%ecx",
+-                                         PARAVIRT_IRQ_ENABLE, CLBR_EAX)
+-                            : : "m" (paravirt_ops.irq_enable)
+-                            : "memory", "eax", "cc");
++       asm volatile(paravirt_alt("pushl %%ecx; pushl %%edx;"
++                                 PARAVIRT_CALL
++                                 "popl %%edx; popl %%ecx")
++                    :
++                    : paravirt_type(irq_enable),
++                      paravirt_clobber(CLBR_EAX)
++                    : "memory", "eax", "cc");
+ }
+
+96a388de5dc53a8b234b3fd41f3ae2cedc9ffd42
+----------------------------------------
+
+include/asm-i386/paravirt.h MOVED TO 
+include/asm-x86/paravirt.h
+
+93b1eab3d29e7ea32ee583de3362da84db06ded8
+----------------------------------------
+[include/asm-x86/paravirt.h]
+Remove global struct paravirt_ops and introduce paravirt_patch_template and 
+seperate xxx_ops
+
++/* This contains all the paravirt structures: we get a convenient
++ * number for each function using the offset which we use to indicate
++ * what to patch. */
++struct paravirt_patch_template
++{
++       struct pv_init_ops pv_init_ops;
++       struct pv_misc_ops pv_misc_ops;
++       struct pv_time_ops pv_time_ops;
++       struct pv_cpu_ops pv_cpu_ops;
++       struct pv_irq_ops pv_irq_ops;
++       struct pv_apic_ops pv_apic_ops;
++       struct pv_mmu_ops pv_mmu_ops;
+ };
+ 
+-extern struct paravirt_ops paravirt_ops;
++extern struct pv_info pv_info;
++extern struct pv_init_ops pv_init_ops;
++extern struct pv_misc_ops pv_misc_ops;
++extern struct pv_time_ops pv_time_ops;
++extern struct pv_cpu_ops pv_cpu_ops;
++extern struct pv_irq_ops pv_irq_ops;
++extern struct pv_apic_ops pv_apic_ops;
++extern struct pv_mmu_ops pv_mmu_ops;
+ 
+ #define PARAVIRT_PATCH(x)                                      \
+-       (offsetof(struct paravirt_ops, x) / sizeof(void *))
++       (offsetof(struct paravirt_patch_template, x) / sizeof(void *))
+ 
+-#define paravirt_type(type)                                    \
+-       [paravirt_typenum] "i" (PARAVIRT_PATCH(type))
++#define paravirt_type(op)                              \
++       [paravirt_typenum] "i" (PARAVIRT_PATCH(op)),    \
++       [paravirt_opptr] "m" (op)
+
+@@ -992,7 +1043,7 @@ static inline void raw_local_irq_enable(void)
+                                  PARAVIRT_CALL
+                                  "popl %%edx; popl %%ecx")
+                     :
+-                    : paravirt_type(irq_enable),
++                    : paravirt_type(pv_irq_ops.irq_enable),
+                       paravirt_clobber(CLBR_EAX)
+                     : "memory", "eax", "cc");
+ }
+
+
+bb8985586b7a906e116db835c64773b7a7d51663
+----------------------------------------
+include/asm-x86/paravirt.h MOVED TO 
+arch/x86/include/asm/paravirt.h
+
+ecb93d1ccd0aac63f03be2db3cac3fa974716f4c
+----------------------------------------
+x86/paravirt: add register-saving thunks to reduce caller register pressure
+
+71999d9862e667f1fd14f8fbfa0cce6d855bad3f
+----------------------------------------
+Use normal calling sequences for irq enable/disable
+
+ static inline void raw_local_irq_enable(void)
+ {
+-       asm volatile(paravirt_alt(PARAVIRT_CALL)
+-                    :
+-                    : paravirt_type(pv_irq_ops.irq_enable),
+-                      paravirt_clobber(CLBR_EAX)
+-                    : "memory", "eax", "cc");
++       PVOP_VCALLEE0(pv_irq_ops.irq_enable);
+ }
+
+
+df9ee29270c11dba7d0fe0b83ce47a4d8e8d2101
+----------------------------------------
+Fix IRQ flag handling naming
+
+-static inline void raw_local_irq_enable(void)
++static inline void arch_local_irq_enable(void)
+ {
+        PVOP_VCALLEE0(pv_irq_ops.irq_enable);
+ }
+
+ac5672f82c39ff2f8dce81bf3e68b1dfc41f366f
+----------------------------------------
+x86/paravirt: split paravirt definitions into paravirt_types.h
+
+
+Analysis
+========
+Mechanics
+---------
+	paravirt_alt()会在内核里生成一个.parainstructions段，其内容为以下结构的数组：
+	[arch/x86/include/asm/paravirt_types.h]
+	struct paravirt_patch_site {
+		u8 *instr; 		/* original instructions */
+		u8 instrtype;		/* type of this instruction */
+		u8 len;			/* length of original instruction */
+		u16 clobbers;		/* what registers you may clobber */
+	};
+	#define _paravirt_alt(insn_string, type, clobber)	\
+		"771:\n\t" insn_string "\n" "772:\n"		\
+		".pushsection .parainstructions,\"a\"\n"	\
+		_ASM_ALIGN "\n"					\
+		_ASM_PTR " 771b\n"				\
+		"  .byte " type "\n"				\
+		"  .byte 772b-771b\n"				\
+		"  .short " clobber "\n"			\
+		".popsection\n"
+	在内核启动时(alternative_instructions)或加载模块时（module_finalize）就会根据具体平台，
+就会调用apply_paravirt对instr位置进行修正：
+	apply_paravirt
+		|__pv_init_ops.patch
+		|__text_poke_early
+	正常情况下pv_init_ops定义于arch/x86/kernel/paravirt.c，使用定义于
+ rch/x86/kernel/paravirt_patch_32.c的native_patch。
+ 	在xen的情况下，使用定义于arch/x86/xen/enlighten.c的xen_init_ops替换pv_init_ops，
+使用xen_patch。
+	
+Corresponding macros - for c files
+----------------------------------
+
+#define PARAVIRT_PATCH(x)					\
+	(offsetof(struct paravirt_patch_template, x) / sizeof(void *))
+	这个函数得到的是要patch的函数的函数编号，即paravirt_typenum，见arch/x86/include/asm/paravirt_types.h
+
+	定义arch_local_irq_enable时，使用的是pv_irq_ops.irq_enable，PVOP_VCALLEE0定义在
+arch/x86/include/asm/paravirt_types.h
+
+#define PVOP_VCALLEE0(op)						\
+	__PVOP_VCALLEESAVE(op, "", "")
+#define __PVOP_VCALLEESAVE(op, pre, post, ...)				\
+	____PVOP_VCALL(op.func, CLBR_RET_REG,				\
+		      PVOP_VCALLEE_CLOBBERS, ,				\
+		      pre, post, ##__VA_ARGS__)
+#define ____PVOP_VCALL(op, clbr, call_clbr, extra_clbr, pre, post, ...)	\
+	({								\
+		PVOP_VCALL_ARGS;					\
+		PVOP_TEST_NULL(op);					\
+		asm volatile(pre					\
+			     paravirt_alt(PARAVIRT_CALL)		\
+			     post					\
+			     : call_clbr				\
+			     : paravirt_type(op),			\
+			       paravirt_clobber(clbr),			\
+			       ##__VA_ARGS__				\
+			     : "memory", "cc" extra_clbr);		\
+	})
+#define PARAVIRT_CALL	"call *%c[paravirt_opptr];"
+	而
+	struct pv_irq_ops {
+		struct paravirt_callee_save irq_enable;
+	}
+	struct paravirt_callee_save {
+		void *func;
+	};
+
+Corresponding macros - for assembly files
+-----------------------------------------
+上面的定义是为了给c文件使用，所以使用了gcc的内嵌汇编的语法asm()
+下面这些宏也是创建.parainstruction段，不同的是目的是为了给汇编文件来使用，
+所以没有使用内嵌汇编的语法。使用的地方见arch/x86/kernel/entry_32.S
+
+#define _PVSITE(ptype, clobbers, ops, word, algn)	\
+771:;						\
+	ops;					\
+772:;						\
+	.pushsection .parainstructions,"a";	\
+	 .align	algn;				\
+	 word 771b;				\
+	 .byte ptype;				\
+	 .byte 772b-771b;			\
+	 .short clobbers;			\
+	.popsection
+
+#define PARA_PATCH(struct, off)        ((PARAVIRT_PATCH_##struct + (off)) / 4)
+#define PARA_SITE(ptype, clobbers, ops) _PVSITE(ptype, clobbers, ops, .long, 4)
+
+#define ENABLE_INTERRUPTS(clobbers)					\
+	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_irq_enable), clobbers,	\
+		  PV_SAVE_REGS(clobbers | CLBR_CALLEE_SAVE);		\
+		  call PARA_INDIRECT(pv_irq_ops+PV_IRQ_irq_enable);	\
+		  PV_RESTORE_REGS(clobbers | CLBR_CALLEE_SAVE);)
+
+Misc
+----
+
+	(1)最后，
+	 static inline void arch_local_irq_enable(void)
+	 {
+		PVOP_VCALLEE0(pv_irq_ops.irq_enable);
+	 }
+	 中引用的pv_irq_ops定义于：arch/x86/kernel/paravirt.c
+	__visible struct pv_irq_ops pv_irq_ops = {
+		.irq_enable = __PV_IS_CALLEE_SAVE(native_irq_enable),
+	}
+	所以，在没patch之前使用的是native_irq_enable，定义于
+	arch/x86/include/asm/irqflags.h
+	static inline void native_irq_enable(void)
+	{
+		asm volatile("sti": : :"memory");
+	}
+	(2)arch/x86/kernel/paravirt_patch_32.c里native_patch使用的
+start_##ops##_##x以及end_##ops##_##x等也在同一文件中定义，由
+DEF_NATIVE(pv_irq_ops, irq_enable, "sti");这样的宏来定义。
+
+/* Simple instruction patching code. */
+#define NATIVE_LABEL(a,x,b) "\n\t.globl " a #x "_" #b "\n" a #x "_" #b ":\n\t"
+
+#define DEF_NATIVE(ops, name, code)					\
+	__visible extern const char start_##ops##_##name[], end_##ops##_##name[];	\
+	asm(NATIVE_LABEL("start_", ops, name) code NATIVE_LABEL("end_", ops, name))
+
+	patch的目标指令（要替换成的指令）就是由这些宏来定义的：
+	ret = paravirt_patch_insns(ibuf, len, start, end);
+
+Ref:
+====
+http://0gram.me/note/135
+http://www.linuxfoundation.jp/jp_uploads/seminar20060911/Rusty_Russell.pdf

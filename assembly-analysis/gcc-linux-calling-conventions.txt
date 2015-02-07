@@ -1,0 +1,194 @@
+64-bit的情况
+============
+
+64-bit情况下寄存器比较多，所以默认就是使用寄存器传递参数的：
+前6个参数使用rdi rsi rdx rcx r8-9来传递，后面的参数才会使用栈
+来传递。
+
+32-bit的情况
+============
+
+32-bit的情况下，gcc默认使用栈来传递参数，如果要使用寄存器来传递参数，
+要使用-mregparm=num 编译参数，或者使用regparm属性：
+
+-mregparm=num
+   Control how many registers are used to pass integer arguments.  By default, no registers are
+   used to pass arguments, and at most 3 registers can be used.  You can control this behavior for
+   a specific function by using the function attribute regparm.
+
+而内核里之所以一般前三个参数使用寄存器来传递，正是因为使用了-mregparm=3参数：
+arch/x86/Makefile:
+ifeq ($(CONFIG_X86_32),y)
+        KBUILD_CFLAGS += -msoft-float -mregparm=3 -freg-struct-return
+
+详见arch/x86/include/asm/calling.h开头的注释。
+
+但是，32位情况下，在内核里还是可以见到有些函数在使用栈来传递参数，比如下面
+的snprintf，经分析发现32位下gcc还有一条规则，就是使用可变参数的函数会使用栈
+来传递参数，不管是否使用的-mregparm=num参数或regparm修饰属性(Function-Attributes
+的使用也见下面这个页面)：
+
+https://gcc.gnu.org/onlinedocs/gcc-3.4.6/gcc/Function-Attributes.html
+regparm (number)
+    On the Intel 386, the regparm attribute causes the compiler to pass up to number integer arguments in registers EAX, EDX, and ECX instead of on the stack. Functions that take a variable number of arguments will continue to be passed all of their arguments on the stack. 
+
+还有：
+http://en.wikibooks.org/wiki/GNU_C_Compiler_Internals/Function_calls_4_1
+"However, if the function takes a variable number of arguments then all parameters
+are passed in the stack."
+
+内核里宏asmlinkage的定义就是使用了regparm属性，该宏指定函数使用栈来传递参数：
+arch/x86/include/asm/linkage.h
+#define asmlinkage CPP_ASMLINKAGE __attribute__((regparm(0)))
+
+--------------------------------------
+--------------------------------------
+
+以下面这个函数来分析：
+static ssize_t
+stack_max_size_read(struct file *filp, char __user *ubuf,
+		    size_t count, loff_t *ppos)
+{
+	unsigned long *ptr = filp->private_data;
+	char buf[64];
+	int r;
+
+	r = snprintf(buf, sizeof(buf), "%ld\n", *ptr);
+	if (r > sizeof(buf))
+		r = sizeof(buf);
+	return simple_read_from_buffer(ubuf, count, ppos, buf, r);
+}
+
+32位的情况：
+-----------
+
+从stack_max_size_read的反汇编来看，它前3个参数使用了%eax, %edx, %ecx，第四个参数
+使用了栈。
+stack_max_size_read调用了两个函数，分别是两个call:
+* 第一个call是对应对snprintf(定义于lib/vsprintf.c)的调用，使用了栈
+* 第二个call对应对simple_read_from_buffer的调用(定义于fs/libfs.c)，前三个参数使用了寄存器，
+后两个参数使用了栈
+
+00000000 <stack_max_size_read>:
+   0:   55                      push   %ebp
+   1:   89 e5                   mov    %esp,%ebp
+   3:   57                      push   %edi
+   4:   89 d7                   mov    %edx,%edi
+   6:   56                      push   %esi
+   7:   53                      push   %ebx
+   8:   bb 40 00 00 00          mov    $0x40,%ebx
+   d:   83 ec 54                sub    $0x54,%esp
+  10:   8b 80 8c 00 00 00       mov    0x8c(%eax),%eax
+  16:   8d 75 b4                lea    -0x4c(%ebp),%esi
+  19:   89 4d b0                mov    %ecx,-0x50(%ebp)
+  1c:   8b 00                   mov    (%eax),%eax
+  1e:   89 34 24                mov    %esi,(%esp)
+  21:   c7 44 24 08 37 00 00    movl   $0x37,0x8(%esp)
+  28:   00 
+  29:   c7 44 24 04 40 00 00    movl   $0x40,0x4(%esp)
+  30:   00 
+  31:   89 44 24 0c             mov    %eax,0xc(%esp)
+  35:   e8 fc ff ff ff          call   36 <stack_max_size_read+0x36>
+  3a:   8b 4d 08                mov    0x8(%ebp),%ecx
+  3d:   8b 55 b0                mov    -0x50(%ebp),%edx
+  40:   89 34 24                mov    %esi,(%esp)
+  43:   83 f8 40                cmp    $0x40,%eax
+  46:   0f 46 d8                cmovbe %eax,%ebx
+  49:   89 f8                   mov    %edi,%eax
+  4b:   89 5c 24 04             mov    %ebx,0x4(%esp)
+  4f:   e8 fc ff ff ff          call   50 <stack_max_size_read+0x50>
+  54:   83 c4 54                add    $0x54,%esp
+  57:   5b                      pop    %ebx
+  58:   5e                      pop    %esi
+  59:   5f                      pop    %edi
+  5a:   5d                      pop    %ebp
+  5b:   c3                      ret    
+
+而且，snprintf调用了同一文件中定义的vsnprintf，对vsnprintf的调用却是通过寄存器的，
+可以看出snprintf先从栈中取出参数，后又放入了寄存器：
+00002ba0 <snprintf>:
+    2ba0:       55                      push   %ebp
+    2ba1:       89 e5                   mov    %esp,%ebp
+    2ba3:       83 ec 04                sub    $0x4,%esp
+    2ba6:       8d 45 14                lea    0x14(%ebp),%eax
+    2ba9:       8b 4d 10                mov    0x10(%ebp),%ecx
+    2bac:       89 04 24                mov    %eax,(%esp)
+    2baf:       8b 55 0c                mov    0xc(%ebp),%edx
+    2bb2:       8b 45 08                mov    0x8(%ebp),%eax
+    2bb5:       e8 fc ff ff ff          call   2bb6 <snprintf+0x16>
+    2bba:       c9                      leave  
+    2bbb:       c3                      ret    
+    2bbc:       8d 74 26 00             lea    0x0(%esi,%eiz,1),%esi
+
+
+x86_64位的情况
+--------------
+如果使用寄存器传参数的话，第一个参数%rdi，第二个参数%rsi，第三个参数%rdx，第四个参数%rcx。
+64位编出来发现，stack_max_size_read对两函数的调用都是使用了寄存器：
+
+0000000000000080 <stack_max_size_read>:
+  80:   55                      push   %rbp
+  81:   48 89 e5                mov    %rsp,%rbp
+  84:   41 55                   push   %r13
+  86:   49 89 cd                mov    %rcx,%r13
+  89:   41 54                   push   %r12
+  8b:   49 89 d4                mov    %rdx,%r12
+  8e:   48 c7 c2 00 00 00 00    mov    $0x0,%rdx
+  95:   53                      push   %rbx
+  96:   48 89 f3                mov    %rsi,%rbx
+  99:   be 40 00 00 00          mov    $0x40,%esi
+  9e:   48 83 ec 40             sub    $0x40,%rsp
+  a2:   48 8b 87 d0 00 00 00    mov    0xd0(%rdi),%rax
+  a9:   48 8d 7d a8             lea    -0x58(%rbp),%rdi
+  ad:   48 8b 08                mov    (%rax),%rcx
+  b0:   31 c0                   xor    %eax,%eax
+  b2:   e8 00 00 00 00          callq  b7 <stack_max_size_read+0x37>
+  b7:   48 8d 4d a8             lea    -0x58(%rbp),%rcx
+  bb:   83 f8 40                cmp    $0x40,%eax
+  be:   4c 63 c0                movslq %eax,%r8
+  c1:   b8 40 00 00 00          mov    $0x40,%eax
+  c6:   4c 89 ea                mov    %r13,%rdx
+  c9:   4c 89 e6                mov    %r12,%rsi
+  cc:   4c 0f 47 c0             cmova  %rax,%r8
+  d0:   48 89 df                mov    %rbx,%rdi
+  d3:   e8 00 00 00 00          callq  d8 <stack_max_size_read+0x58>
+  d8:   48 83 c4 40             add    $0x40,%rsp
+  dc:   5b                      pop    %rbx
+  dd:   41 5c                   pop    %r12
+  df:   41 5d                   pop    %r13
+  e1:   5d                      pop    %rbp
+  e2:   c3                      retq   
+
+ 
+snprintf调用vsnprintf也是使用寄存器：
+0000000000003240 <snprintf>:
+    3240:       55                      push   %rbp
+    3241:       48 89 e5                mov    %rsp,%rbp
+    3244:       48 83 ec 48             sub    $0x48,%rsp
+    3248:       48 8d 45 10             lea    0x10(%rbp),%rax
+    324c:       48 89 4c 24 30          mov    %rcx,0x30(%rsp)
+    3251:       48 89 e1                mov    %rsp,%rcx
+    3254:       4c 89 44 24 38          mov    %r8,0x38(%rsp)
+    3259:       4c 89 4c 24 40          mov    %r9,0x40(%rsp)
+    325e:       48 89 44 24 08          mov    %rax,0x8(%rsp)
+    3263:       48 8d 44 24 18          lea    0x18(%rsp),%rax
+    3268:       c7 04 24 18 00 00 00    movl   $0x18,(%rsp)
+    326f:       48 89 44 24 10          mov    %rax,0x10(%rsp)
+    3274:       e8 00 00 00 00          callq  3279 <snprintf+0x39>
+    3279:       c9                      leaveq 
+    327a:       c3                      retq   
+    327b:       0f 1f 44 00 00          nopl   0x0(%rax,%rax,1)
+
+
+Links:
+======
+
+https://gcc.gnu.org/onlinedocs/gcc-3.4.6/gcc/Function-Attributes.html
+http://en.wikibooks.org/wiki/GNU_C_Compiler_Internals/Function_calls_4_1
+http://stackoverflow.com/questions/2535989/what-are-the-calling-conventions-for-unix-linux-system-calls-on-x86-64
+http://www.unixwiz.net/techtips/win32-callconv-asm.html
+
+Res about gcc:
+==============
+http://en.wikibooks.org/wiki/GNU_C_Compiler_Internals
+http://en.wikibooks.org/wiki/GNU_C_Compiler_Internals/GNU_C_Compiler_Architecture

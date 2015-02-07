@@ -1,0 +1,47 @@
+    将一个整数(key)转化为大小为bits（有2^bits个key，这里的意思是key可以用bits位来表示）的hash表中的一个index值（注意不能称为key，下面的例子有误）可以通过hash_long:
+include/linux/hash.h
+
+#if BITS_PER_LONG == 32
+#define GOLDEN_RATIO_PRIME GOLDEN_RATIO_PRIME_32
+#define hash_long(val, bits) hash_32(val, bits)
+#elif BITS_PER_LONG == 64
+#define hash_long(val, bits) hash_64(val, bits)
+#define GOLDEN_RATIO_PRIME GOLDEN_RATIO_PRIME_64
+#else
+#error Wordsize not 32 or 64
+#endif
+
+static inline u32 hash_32(u32 val, unsigned int bits)
+{
+    /* On some cpus multiply is faster, on others gcc will do shifts */
+    u32 hash = val * GOLDEN_RATIO_PRIME_32;
+
+    /* High bits are more random, so use them. */
+    return hash >> (32 - bits);
+}
+
+    同样，将一个指针转化成key可以通过：
+
+static inline unsigned long hash_ptr(const void *ptr, unsigned int bits)
+{
+    return hash_long((unsigned long)ptr, bits);
+}
+
+应用案例：
+======
+kernel/trace/ftrace.c
+static void __add_hash_entry(struct ftrace_hash *hash,
+                 struct ftrace_func_entry *entry)
+{
+    struct hlist_head *hhd;
+    unsigned long key;
+
+    if (hash->size_bits)
+        key = hash_long(entry->ip, hash->size_bits);
+    else
+        key = 0;
+
+    hhd = &hash->buckets[key];
+    hlist_add_head(&entry->hlist, hhd);
+    hash->count++;
+}

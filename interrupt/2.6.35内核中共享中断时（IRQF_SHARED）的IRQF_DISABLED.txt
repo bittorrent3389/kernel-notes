@@ -1,0 +1,37 @@
+由于在2.6.35内核中，决定是否打开中断只是判断了相应中断通道irqaction队列中的第一个action，所以只有队列中第一个handler的IRQF_DISABLED队列有效（按每一个irqaction的flags标志位来处理）：
+irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
+{
+ irqreturn_t ret, retval = IRQ_NONE;
+ unsigned int status = 0;
+
+
+ if (!(action->flags & IRQF_DISABLED))
+ local_irq_enable_in_hardirq();
+... ...
+
+IRQF_DISABLED是一种请求，
+如果一个irqaction(handler)设置了IRQF_DISABLED，而队列第一个irqaction没有设置这个标志位，则其设置无效。这是一个“问题”。
+如果一个irqaction没有设置IRQF_DISABLED，而队列第一个irqaction设置了这个标志位，则其可以说是免费获得了这个标志带来的效果（执行时关闭本地中断）。这不算是个“问题”。
+所以有下面的注释：
+
+int request_threaded_irq(unsigned int irq, irq_handler_t handler,
+  irq_handler_t thread_fn, unsigned long irqflags,
+  const char *devname, void *dev_id)
+{
+ struct irqaction *action;
+ struct irq_desc *desc;
+ int retval;
+
+
+ /*
+  * handle_IRQ_event() always ignores IRQF_DISABLED except for
+  * the _first_ irqaction (sigh).  That can cause oopsing, but
+  * the behavior is classified as "will not fix" so we need to
+  * start nudging drivers away from using that idiom.
+  */
+ if ((irqflags & (IRQF_SHARED|IRQF_DISABLED)) ==
+ (IRQF_SHARED|IRQF_DISABLED)) {
+ pr_warning(
+   "IRQ %d/%s: IRQF_DISABLED is not guaranteed on shared IRQs\n",
+ irq, devname);
+ }

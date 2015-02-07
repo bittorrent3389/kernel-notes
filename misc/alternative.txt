@@ -1,0 +1,110 @@
+alternative
+===========
+
+	alternative机制可以根据cpu的特性，动态地对特定指令进行修改，以运行最合适的指令。
+相关宏定义可见于arch/x86/include/asm/alternative.h:
+
+#define OLDINSTR(oldinstr)	"661:\n\t" oldinstr "\n662:\n"
+
+#define b_replacement(number)	"663"#number
+#define e_replacement(number)	"664"#number
+
+#define alt_slen "662b-661b"
+#define alt_rlen(number) e_replacement(number)"f-"b_replacement(number)"f"
+
+#define ALTINSTR_ENTRY(feature, number)					      \
+	" .long 661b - .\n"				/* label           */ \
+	" .long " b_replacement(number)"f - .\n"	/* new instruction */ \
+	" .word " __stringify(feature) "\n"		/* feature bit     */ \
+	" .byte " alt_slen "\n"				/* source len      */ \
+	" .byte " alt_rlen(number) "\n"			/* replacement len */
+
+#define DISCARD_ENTRY(number)				/* rlen <= slen */    \
+	" .byte 0xff + (" alt_rlen(number) ") - (" alt_slen ")\n"
+
+#define ALTINSTR_REPLACEMENT(newinstr, feature, number)	/* replacement */     \
+	b_replacement(number)":\n\t" newinstr "\n" e_replacement(number) ":\n\t"
+
+/* alternative assembly primitive: */
+#define ALTERNATIVE(oldinstr, newinstr, feature)			\
+	OLDINSTR(oldinstr)						\
+	".pushsection .altinstructions,\"a\"\n"				\
+	ALTINSTR_ENTRY(feature, 1)					\
+	".popsection\n"							\
+	".pushsection .discard,\"aw\",@progbits\n"			\
+	DISCARD_ENTRY(1)						\
+	".popsection\n"							\
+	".pushsection .altinstr_replacement, \"ax\"\n"			\
+	ALTINSTR_REPLACEMENT(newinstr, feature, 1)			\
+	".popsection"
+
+#define alternative(oldinstr, newinstr, feature)			\
+	asm volatile (ALTERNATIVE(oldinstr, newinstr, feature) : : : "memory")
+
+	定义了alternative后会生成.altinstructions、.discard、.altinstr_replacement
+三个段，其中.altinstructions段里是struct alt_instr结构的数组，定义于同一个头文件
+里：
+struct alt_instr {
+	s32 instr_offset;	
+	s32 repl_offset;	
+	u16 cpuid;		
+	u8  instrlen;		
+	u8  replacementlen;	
+};
+	根据上面的宏定义可知，instr_offset是原指定距当前位置(instr_offset)的偏移，
+repl_offset是替换指令距当前位置(repl_offset)的偏移，cpuid是指的是此指令替换是针对
+哪个cpu特性的, instrlen指原指令的长度，replacementlen是替换指令的长度。
+	另外，替换指令存放在.altinstr_replacement段里。
+
+	这个特性的使用比如arch/x86/include/asm/barrier.h:
+#define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2)
+	就是说当cpu具有X86_FEATURE_XMM2特性时使用mfence来替换addl指令。
+
+原理
+====
+alternative_instructions()
+	|
+apply_alternatives(__alt_instructions, __alt_instructions_end);
+	这里会通过for循环遍历.altinstrctions段里的每一个struct alt_instr段，看
+当前cpu是否具有此特性：if (!boot_cpu_has(a->cpuid))，如果具有则通过
+text_poke_early进行替换。
+
+.discard段的作用
+================
+	替换指令的长度应该小于等于原指令的长度，这里通过
+" .byte 0xff + (" alt_rlen(number) ") - (" alt_slen ")\n"在编译时进行检测：
+如果替换指令长度大于了原指令长度，则alt_rlen(number) - alt_slen会大于0，
+与0xff相加后就会大于1个字节，而.byte要求输出一个字节，这样编译时就会报错：
+
+commit 01be50a308be466e122c3a8b3d535f1b673ecbd2
+Author: Jan Beulich <JBeulich@novell.com>
+Date:   Fri Nov 27 15:04:58 2009 +0000
+
+    x86/alternatives: Check replacementlen <= instrlen at build time
+    
+    Having run into the run-(boot-)time check a couple of times lately,
+    I finally took time to find a build-time check so that one doesn't
+    need to analyze the register/stack dump and resolve this (through
+    manual lookup in vmlinux) to the offending construct.
+    
+    The assembler will emit a message like "Error: value of <num> too
+    large for field of 1 bytes at <offset>", which while not pointing
+    out the source location still makes analysis quite a bit easier.
+    
+    Signed-off-by: Jan Beulich <jbeulich@novell.com>
+    LKML-Reference: <4B0FF8AA0200007800022703@vpn.id2.novell.com>
+    Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+diff --git a/arch/x86/include/asm/alternative.h b/arch/x86/include/asm/alternative.h
+index c240efc..69b74a7 100644
+--- a/arch/x86/include/asm/alternative.h
++++ b/arch/x86/include/asm/alternative.h
+@@ -84,6 +84,7 @@ static inline void alternatives_smp_switch(int smp) {}
+       "         .byte " __stringify(feature) "\n"      /* feature bit     */   \
+       "         .byte 662b-661b\n"                     /* sourcelen       */   \
+       "         .byte 664f-663f\n"                     /* replacementlen  */   \
++      "         .byte 0xff + (664f-663f) - (662b-661b)\n" /* rlen <= slen */   \
+       ".previous\n"                                                    \
+       ".section .altinstr_replacement, \"ax\"\n"                       \
+       "663:\n\t" newinstr "\n664:\n"           /* replacement     */   \
+

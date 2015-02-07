@@ -1,0 +1,139 @@
+switch...case
+=============
+
+当switch...case中各个case的值是一个顺序的index时
+------------------------------------------------
+
+如vsnprintf中各个switch...case跳转的实现是通过
+jmpq   *0x0(,%rdx,8)
+来实现的。
+
+vsnprintf中的代码：
+
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+{
+	while (*fmt) {
+		switch (spec.type) {
+		case FORMAT_TYPE_NONE: {
+		case FORMAT_TYPE_WIDTH:
+		case FORMAT_TYPE_PRECISION:
+		case FORMAT_TYPE_CHAR: {
+		case FORMAT_TYPE_STR:
+		case FORMAT_TYPE_PTR:
+		case FORMAT_TYPE_PERCENT_CHAR:
+		case FORMAT_TYPE_INVALID:
+		default:
+	}
+}
+
+各case的定义：
+enum format_type {
+	FORMAT_TYPE_NONE, /* Just a string part */
+	FORMAT_TYPE_WIDTH,
+	FORMAT_TYPE_PRECISION,
+	FORMAT_TYPE_CHAR,
+	FORMAT_TYPE_STR,
+	FORMAT_TYPE_PTR,
+	FORMAT_TYPE_PERCENT_CHAR,
+	FORMAT_TYPE_INVALID,
+	... ...
+}
+
+此时汇编实现：
+
+	movzbl	-48(%rbp), %edx	# spec.type,
+	cmpb	$7, %dl	#, D.50783
+	#如果大于FORMAT_TYPE_INVALID则执行default流程。
+	ja	.L882	#,
+	jmp	*.L884(,%rdx,8)	#
+	#在.rodata里生成跳转表
+	.section	.rodata
+.L884:
+	.quad	.L883
+	.quad	.L885
+	.quad	.L886
+	.quad	.L887
+	.quad	.L888
+	.quad	.L889
+	.quad	.L891
+	.quad	.L891
+
+当各case之间并不是按严格递增关系时，也可以使用跳转表：
+(1) 当第一个表项不是从0开始时，可以减去相应的大小，使index从0开始：
+	FORMAT_TYPE_NONE = 3,
+
+	movzbl	-48(%rbp), %eax	# spec.type, D.50783
+	leal	-3(%rax), %edx	#, tmp261
+	cmpb	$7, %dl	#, tmp261
+	ja	.L882	#,
+	movzbl	%dl, %edx	# tmp261, tmp262
+	jmp	*.L884(,%rdx,8)	#
+	.section	.rodata
+.L884:
+	.quad	.L883
+	.quad	.L885
+	.quad	.L886
+	.quad	.L887
+	.quad	.L888
+	.quad	.L889
+	.quad	.L891
+	.quad	.L891
+(2) 当表项中间有间隙时，会在表中插入一个或多个空白项来填充：
+	FORMAT_TYPE_CHAR = 10,
+
+	movzbl	-48(%rbp), %edx	# spec.type, D.50783
+	cmpb	$14, %dl	#, D.50783
+	ja	.L882	#,
+	movzbl	%dl, %eax	# D.50783, D.50783
+.LVL928:
+	jmp	*.L884(,%rax,8)	#
+	.section	.rodata
+.L884:
+	.quad	.L883
+	.quad	.L885
+	.quad	.L886
+	.quad	.L882
+	.quad	.L882
+	.quad	.L882
+	.quad	.L882
+	.quad	.L882
+	.quad	.L882
+	.quad	.L882
+	.quad	.L887
+	.quad	.L888
+	.quad	.L889
+	.quad	.L891
+	.quad	.L891
+
+
+当各case差别太大，生成table会浪费大量空间时，比如设置：
+-------------------------------------------------------
+	FORMAT_TYPE_CHAR = 100,
+此时就不是通过跳转表来实现的，而是通过较慢的cmp来实现的：
+
+	movzbl	-48(%rbp), %edx	# spec.type, D.50784
+	cmpb	$100, %dl	#, D.50784
+	je	.L887	#,
+	jbe	.L984	#,
+	cmpb	$102, %dl	#, D.50784
+	je	.L892	#,
+	.p2align 4,,8
+	jb	.L893	#,
+	cmpb	$103, %dl	#, D.50784
+	.p2align 4,,5
+	je	.L895	#,
+	cmpb	$104, %dl	#, D.50784
+	.p2align 4,,5
+	jne	.L886	#,
+
+	cmpb	$1, %dl	#, D.50784
+	je	.L889	#,
+	jb	.L890	#,
+	cmpb	$2, %dl	#, D.50784
+	.p2align 4,,5
+	jne	.L886	#,
+
+
+Ref:
+====
+http://stackoverflow.com/questions/9617877/assembly-jg-jnle-jl-jnge-after-cmp

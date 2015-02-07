@@ -1,0 +1,45 @@
+当前的内核里，模块的引用计数不需模块自己维护，而是在文件open和close时由VFS层代为处理：
+以字符设备为例，
+打开设备文件时：
+...  ...
+finish_open()-->do_dentry_open()-->f_op->open()-->chrdev_open()
+fs/char_dev.c
+chrdev_open()
+        |_ struct cdev *p = inode->i_cdev;
+        |_cdev_get(p)
+        |_ filp->f_op = fops_get(p->ops);
+        |_filp->f_op->open(inode, filp);
+这里先获得要打开设备的cdev结构指针。
+然后通过cdev_get和fops_get增加相应模块的引用计数，最后调用相应模块的open函数。
+这里增加了两次模块的引用计数，所以，open之后通过lsmod看到的模块的引用计数为2。
+
+static struct kobject *cdev_get(struct cdev *p)
+{
+        struct module *owner = p->owner;
+        struct kobject *kobj;
+
+        if (owner && !try_module_get(owner))
+               return NULL;
+        kobj = kobject_get(&p->kobj);
+        if (!kobj)
+               module_put(owner);
+        return kobj;
+}
+实际这里就是把cdev的引用计数和模块的引用计数结合起来，因为这里cdev有些操作是由模块实现的（包括cdev结构本身）。所以只要cdev还有引用计数而没有被释放，后面就有可能被访问进而访问模块里的代码，这样，相应的模块就不能被释放。这也适合于模块里实现的其它对象，见后面lwn的文章[3]。
+include/linux/fs.h
+#define fops_get(fops) \
+         (((fops) && try_module_get((fops)->owner) ? (fops) : NULL))
+而cdev和file_operation结构的owner域在驱动模块里都被设置成了THIS_MODULE，即相应的模块。
+
+关闭设备文件时：
+sys_close-->__close_fd()-->filp_close--> 
+__fput()
+       |_ cdev_put(inode->i_cdev);
+       |_ fops_put(file->f_op);
+
+        所以，当用户空间打开了一个设备文件尚未关闭时，模块是不能卸载的。所以ldd3 scullp例子中不用担心还存在映射map的情况下模块被卸载的问题。一定是要到用户空间程序(ldd3里的mapper程序)关闭映射时才可以卸载模块。
+
+Ref:
+[1]http://www.embedu.org/Column/Column92.htm
+[2]http://stackoverflow.com/questions/1741415/linux-kernel-modules-when-to-use-try-module-get-module-put
+[3]http://lwn.net/Articles/68149/

@@ -1,0 +1,1013 @@
+(1) switch...case
+=================
+vsnprintf中各个switch...case跳转的实现是通过
+jmpq   *0x0(,%rdx,8)
+来实现的。
+具体分析见下面：#switch...case实现分析。
+
+完整的switch...case的实现的分析，见switch-case-assembly.txt里的分析。
+
+(2) 64位情况下可变参数的传递
+============================
+可变参数的实现需要va_start, va_list, va_end等宏，因为可变参数一般有多个，所以
+一般都放在栈上，而va_list args本来意义上作为获取的可变参数的指针传递下去，这就
+更要求要把可变参数放在内存里（寄存器变量不能取地址）。
+
+但64位情况下接收可变参数时也会使用寄存器（三个以内，三个以上则放到栈上），比如下面
+的snprintf函数在接收一个可变参数时就是放在%rcx里的，当然最终还是要放在栈上，下面是
+分析：
+a.可变参数在栈上的布置
+b.#va_arg对可变参数的获取
+c.对va_xxx宏实现的分析:
+	/usr/lib/gcc/x86_64-linux-gnu/4.8/include/stdarg.h
+
+	#define va_start(v,l)	__builtin_va_start(v,l)
+	#define va_end(v)	__builtin_va_end(v)
+	#define va_arg(v,l)	__builtin_va_arg(v,l)
+
+	gcc里的实现：
+	http://blog.csdn.net/slvher/article/details/9881171
+	http://www.delorie.com/gnu/docs/gcc/gccint_135.html
+
+d.在case的值不是递增的时候如何处理，见switch-case-assembly.txt里的分析。
+
+$ objdump -S lib/vsprintf.o
+===========================
+
+a. 可变参数在栈上的布置
+-----------------------
+
+如果使用寄存器传参数的话，第一个参数%rdi，第二个参数%rsi，第三个参数%rdx，第四个参数%rcx。
+int snprintf(char *buf, size_t size, const char *fmt, ...)
+{
+    3254:	4c 89 44 24 38       	mov    %r8,0x38(%rsp)
+    3259:	4c 89 4c 24 40       	mov    %r9,0x40(%rsp)
+	va_list args;
+	int i;
+
+	va_start(args, fmt);
+    325e:	48 89 44 24 08       	mov    %rax,0x8(%rsp)
+    3263:	48 8d 44 24 18       	lea    0x18(%rsp),%rax
+    //wjx:%rcx是这里第四个参数，即第一个可变参数。
+    //wjx:%rcx将做为下一个函数的第四个参数
+    //wjx:转手放到栈上，就有了地址，使%rcx指向%rsp，将$0x18放入($rsp)，用法见下面说明
+    3268:	c7 04 24 18 00 00 00 	movl   $0x18,(%rsp)
+    326f:	48 89 44 24 10       	mov    %rax,0x10(%rsp)
+	i = vsnprintf(buf, size, fmt, args);
+    3274:	e8 00 00 00 00       	callq  3279 <snprintf+0x39>
+	va_end(args);
+
+	return i;
+}
+    3279:	c9                   	leaveq 
+    327a:	c3                   	retq   
+    327b:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+
+下面是vsprintf调用vsnprintf时的栈情况：
+
+vsprintf:
+             +----------+
+             |          |
+             +----------+         
+             |          | <-----+ 
+             +----------+       | 
+             |   ret    |       | 
+             +----------+       | 
+   %rbp ---> |  %rbp    |       | 
+             +----------+       | 
+             |  %r9     |       | 
+             +----------+       | 
+             |  %r8     |       | 
+             +----------+       | 
+             |  %rcx    |       | 
+             +----------+       | 
+             |          |       | 
+             +----------+       | 
+             |          |       |
+             +----------+       |
+       +0x18 |          | <--+  |
+             +----------+    |  |
+       +0x10 |      ----+----+  |
+             +----------+       |
+       +0x8  |      ----+-------+
+             +----------+
+   %rsp ---> |  $0x18   | <--- %rcx (%r13 when in vsnprintf)
+             +----------+
+
+
+0000000000002c20 <vsnprintf>:
+ * string is truncated.
+ *
+ * If you're not already dealing with a va_list consider using snprintf().
+ */
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+{
+    2c20:	55                   	push   %rbp
+    2c21:	48 89 e5             	mov    %rsp,%rbp
+    2c24:	41 57                	push   %r15
+    2c26:	41 56                	push   %r14
+    2c28:	41 55                	push   %r13
+    2c2a:	41 54                	push   %r12
+    2c2c:	53                   	push   %rbx
+    2c2d:	48 83 ec 30          	sub    $0x30,%rsp
+	char *str, *end;
+	struct printf_spec spec = {0};
+
+	/* Reject out-of-range values early.  Large positive sizes are
+	   used for unknown buffer sizes. */
+	if (WARN_ON_ONCE((int) size < 0))
+    2c31:	85 f6                	test   %esi,%esi
+ * string is truncated.
+ *
+ * If you're not already dealing with a va_list consider using snprintf().
+ */
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+{
+    2c33:	48 89 75 c8          	mov    %rsi,-0x38(%rbp)
+	unsigned long long num;
+	char *str, *end;
+	struct printf_spec spec = {0};
+    2c37:	48 c7 45 d0 00 00 00 	movq   $0x0,-0x30(%rbp)
+    2c3e:	00 
+
+	/* Reject out-of-range values early.  Large positive sizes are
+	   used for unknown buffer sizes. */
+	if (WARN_ON_ONCE((int) size < 0))
+    2c3f:	0f 88 42 05 00 00    	js     3187 <vsnprintf+0x567>
+
+	str = buf;
+	end = buf + size;
+
+	/* Make sure end is always >= buf */
+	if (end < buf) {
+    2c45:	4c 8b 65 c8          	mov    -0x38(%rbp),%r12
+    2c49:	48 89 fb             	mov    %rdi,%rbx
+    2c4c:	49 89 d7             	mov    %rdx,%r15
+    2c4f:	49 89 cd             	mov    %rcx,%r13
+    2c52:	49 01 fc             	add    %rdi,%r12
+    2c55:	0f 82 2d 03 00 00    	jb     2f88 <vsnprintf+0x368>
+    2c5b:	48 89 7d c0          	mov    %rdi,-0x40(%rbp)
+    #从fmt所指向的内存取一个字符，零扩展到双字（32位）
+    2c5f:	41 0f b6 07          	movzbl (%r15),%eax
+    2c63:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+		end = ((void *)-1);
+		size = end - buf;
+	}
+
+	while (*fmt) {
+    #判断%eax低8位是否为0
+    2c68:	84 c0                	test   %al,%al
+    #如果为0，说明fmt为空
+    2c6a:	74 43                	je     2caf <vsnprintf+0x8f>
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+    2c6c:	48 8d 75 d0          	lea    -0x30(%rbp),%rsi
+    2c70:	4c 89 ff             	mov    %r15,%rdi
+    2c73:	e8 f8 d7 ff ff       	callq  470 <format_decode>
+
+		fmt += read;
+
+		switch (spec.type) {
+    #从spec取一个byte到32位的%edx，零扩展，获取spec.type
+    2c78:	0f b6 55 d0          	movzbl -0x30(%rbp),%edx
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2c7c:	48 63 c8             	movslq %eax,%rcx
+    2c7f:	4d 8d 34 0f          	lea    (%r15,%rcx,1),%r14
+
+		switch (spec.type) {
+    #与FORMAT_TYPE_INVALID比较
+    2c83:	80 fa 07             	cmp    $0x7,%dl
+    #大于FORMAT_TYPE_INVALID则跳转
+    2c86:	0f 87 64 02 00 00    	ja     2ef0 <vsnprintf+0x2d0>
+
+    #switch...case实现分析
+    ----------------------
+    #跳转到各case
+    #这里其实也要重定位，因为在vsprintf.o里的各个switch对应的jmpq的起始
+    #位置都是0x0，其实这些0x0是分别是针对.rodata里的某个位置的，这里的情况：
+    #RELOCATION RECORDS FOR [.text]:
+    #0000000000002c8f R_X86_64_32S      .rodata+0x0000000000000988
+    #其实这里就是对.rodata里偏移为0x988的位置进行重定位，也就是说这个switch对应
+    #的各个case就位于这个位置:（下面的内容来自重定位段）
+    #RELOCATION RECORDS FOR [.rodata]:
+    #0000000000000988 R_X86_64_64       .text+0x0000000000002e80
+    #0000000000000990 R_X86_64_64       .text+0x0000000000002e50
+    #0000000000000998 R_X86_64_64       .text+0x0000000000002ec0
+    #00000000000009a0 R_X86_64_64       .text+0x0000000000002db0
+    #00000000000009a8 R_X86_64_64       .text+0x0000000000002d68
+    #00000000000009b0 R_X86_64_64       .text+0x0000000000002ce0
+    #00000000000009b8 R_X86_64_64       .text+0x0000000000002c98
+    #00000000000009c0 R_X86_64_64       .text+0x0000000000002c98
+    #也就是说.rodata段里的988,990,998,9a0等这些位置都要保存.text段中相应位置在
+    #重定位后的虚拟地址，以供下面这条jmpq来跳转，因为这些重定位项是针对.text段中具体
+    #位置的重定位，如.text+0x0000000000002e50，而不是针对.text符号的重定位，所以
+    #.rodata段里的相应位置都是0（而不用填写相应位置距.text段的偏移），这可以从
+    #$ objdump -j .rodata -s lib/vsprintf.o可以看出有大片的0
+    #
+    #更直观的观察跳转表的创建可以生成.s文件后查看：
+    #$ make lib/vsprintf.s
+    # .LVL927:
+    # 	.loc 1 1678 0
+    # 	cmpb	$7, %dl	#, D.50783
+    # 	ja	.L882	#,
+    # 	jmp	*.L884(,%rdx,8)	#
+    # 	.section	.rodata
+    # 	.align 8
+    # 	.align 4
+    # .L884:
+    # 	.quad	.L883
+    # 	.quad	.L885
+    # 	.quad	.L886
+    # 	.quad	.L887
+    # 	.quad	.L888
+    # 	.quad	.L889
+    # 	.quad	.L891
+    # 	.quad	.L891
+
+    2c8c:	ff 24 d5 00 00 00 00 	jmpq   *0x0(,%rdx,8)
+    2c93:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+				*str = '%';
+			++str;
+			break;
+
+		case FORMAT_TYPE_INVALID:
+			if (str < end)
+    2c98:	4c 39 e3             	cmp    %r12,%rbx
+    2c9b:	73 03                	jae    2ca0 <vsnprintf+0x80>
+				*str = '%';
+    2c9d:	c6 03 25             	movb   $0x25,(%rbx)
+    #读取fmt中下一个字符
+    2ca0:	41 0f b6 06          	movzbl (%r14),%eax
+			++str;
+    2ca4:	48 83 c3 01          	add    $0x1,%rbx
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2ca8:	4d 89 f7             	mov    %r14,%r15
+	if (end < buf) {
+		end = ((void *)-1);
+		size = end - buf;
+	}
+
+	while (*fmt) {
+    2cab:	84 c0                	test   %al,%al
+    #跳转到while开头。
+    2cad:	75 bd                	jne    2c6c <vsnprintf+0x4c>
+
+			str = number(str, end, num, spec);
+		}
+	}
+
+	if (size > 0) {
+    2caf:	48 83 7d c8 00       	cmpq   $0x0,-0x38(%rbp)
+    2cb4:	74 0c                	je     2cc2 <vsnprintf+0xa2>
+		if (str < end)
+    #wjx:%r12 : end , %rbx : str
+    2cb6:	49 39 dc             	cmp    %rbx,%r12
+    2cb9:	0f 86 39 03 00 00    	jbe    2ff8 <vsnprintf+0x3d8>
+			*str = '\0';
+    2cbf:	c6 03 00             	movb   $0x0,(%rbx)
+		else
+			end[-1] = '\0';
+	}
+
+	/* the trailing null byte doesn't count towards the total */
+	return str-buf;
+    2cc2:	89 d8                	mov    %ebx,%eax
+    2cc4:	2b 45 c0             	sub    -0x40(%rbp),%eax
+
+}
+    2cc7:	48 83 c4 30          	add    $0x30,%rsp
+    2ccb:	5b                   	pop    %rbx
+    2ccc:	41 5c                	pop    %r12
+    2cce:	41 5d                	pop    %r13
+    2cd0:	41 5e                	pop    %r14
+    2cd2:	41 5f                	pop    %r15
+    2cd4:	5d                   	pop    %rbp
+    2cd5:	c3                   	retq   
+    2cd6:	66 2e 0f 1f 84 00 00 	nopw   %cs:0x0(%rax,%rax,1)
+    2cdd:	00 00 00 
+
+
+    -----cases-----
+
+		case FORMAT_TYPE_STR:
+			str = string(str, end, va_arg(args, char *), spec);
+			break;
+
+		case FORMAT_TYPE_PTR:
+			str = pointer(fmt+1, str, end, va_arg(args, void *),
+    2ce0:	41 8b 55 00          	mov    0x0(%r13),%edx
+    2ce4:	83 fa 30             	cmp    $0x30,%edx
+    2ce7:	0f 83 23 02 00 00    	jae    2f10 <vsnprintf+0x2f0>
+    2ced:	89 d0                	mov    %edx,%eax
+    2cef:	49 03 45 10          	add    0x10(%r13),%rax
+    2cf3:	83 c2 08             	add    $0x8,%edx
+    2cf6:	41 89 55 00          	mov    %edx,0x0(%r13)
+    2cfa:	0f b7 55 d6          	movzwl -0x2a(%rbp),%edx
+    2cfe:	44 0f b6 4d d2       	movzbl -0x2e(%rbp),%r9d
+    2d03:	49 8d 7e 01          	lea    0x1(%r14),%rdi
+    2d07:	44 0f b6 45 d1       	movzbl -0x2f(%rbp),%r8d
+    2d0c:	48 89 de             	mov    %rbx,%rsi
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2d0f:	4d 89 f7             	mov    %r14,%r15
+		case FORMAT_TYPE_STR:
+			str = string(str, end, va_arg(args, char *), spec);
+			break;
+
+		case FORMAT_TYPE_PTR:
+			str = pointer(fmt+1, str, end, va_arg(args, void *),
+    2d12:	66 89 54 24 08       	mov    %dx,0x8(%rsp)
+    2d17:	0f b7 55 d4          	movzwl -0x2c(%rbp),%edx
+    2d1b:	66 89 14 24          	mov    %dx,(%rsp)
+    2d1f:	48 8b 08             	mov    (%rax),%rcx
+    2d22:	4c 89 e2             	mov    %r12,%rdx
+    2d25:	e8 a6 fa ff ff       	callq  27d0 <pointer.isra.18>
+    2d2a:	48 89 c3             	mov    %rax,%rbx
+				      spec);
+			while (isalnum(*fmt))
+    2d2d:	41 0f b6 06          	movzbl (%r14),%eax
+    2d31:	0f b6 d0             	movzbl %al,%edx
+    2d34:	f6 82 00 00 00 00 07 	testb  $0x7,0x0(%rdx)
+    2d3b:	0f 84 27 ff ff ff    	je     2c68 <vsnprintf+0x48>
+    2d41:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+				fmt++;
+    2d48:	49 83 c7 01          	add    $0x1,%r15
+			break;
+
+		case FORMAT_TYPE_PTR:
+			str = pointer(fmt+1, str, end, va_arg(args, void *),
+				      spec);
+			while (isalnum(*fmt))
+    2d4c:	41 0f b6 07          	movzbl (%r15),%eax
+    2d50:	0f b6 d0             	movzbl %al,%edx
+    2d53:	f6 82 00 00 00 00 07 	testb  $0x7,0x0(%rdx)
+    2d5a:	75 ec                	jne    2d48 <vsnprintf+0x128>
+    2d5c:	e9 07 ff ff ff       	jmpq   2c68 <vsnprintf+0x48>
+    2d61:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+			}
+			break;
+		}
+
+		case FORMAT_TYPE_STR:
+			str = string(str, end, va_arg(args, char *), spec);
+    2d68:	41 8b 55 00          	mov    0x0(%r13),%edx
+    2d6c:	83 fa 30             	cmp    $0x30,%edx
+    2d6f:	0f 83 cb 01 00 00    	jae    2f40 <vsnprintf+0x320>
+    2d75:	89 d0                	mov    %edx,%eax
+    2d77:	49 03 45 10          	add    0x10(%r13),%rax
+    2d7b:	83 c2 08             	add    $0x8,%edx
+    2d7e:	41 89 55 00          	mov    %edx,0x0(%r13)
+    2d82:	44 0f b7 4d d6       	movzwl -0x2a(%rbp),%r9d
+    2d87:	44 0f b7 45 d4       	movzwl -0x2c(%rbp),%r8d
+    2d8c:	48 89 df             	mov    %rbx,%rdi
+    2d8f:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+    2d93:	48 8b 10             	mov    (%rax),%rdx
+    2d96:	4c 89 e6             	mov    %r12,%rsi
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2d99:	4d 89 f7             	mov    %r14,%r15
+			}
+			break;
+		}
+
+		case FORMAT_TYPE_STR:
+			str = string(str, end, va_arg(args, char *), spec);
+    2d9c:	e8 0f ec ff ff       	callq  19b0 <string.isra.7>
+    2da1:	48 89 c3             	mov    %rax,%rbx
+    2da4:	41 0f b6 06          	movzbl (%r14),%eax
+			break;
+    2da8:	e9 bb fe ff ff       	jmpq   2c68 <vsnprintf+0x48>
+    2dad:	0f 1f 00             	nopl   (%rax)
+			break;
+
+		case FORMAT_TYPE_CHAR: {
+			char c;
+
+			if (!(spec.flags & LEFT)) {
+    2db0:	f6 45 d1 10          	testb  $0x10,-0x2f(%rbp)
+    2db4:	75 36                	jne    2dec <vsnprintf+0x1cc>
+				while (--spec.field_width > 0) {
+    2db6:	0f b7 45 d4          	movzwl -0x2c(%rbp),%eax
+    2dba:	83 e8 01             	sub    $0x1,%eax
+    2dbd:	66 85 c0             	test   %ax,%ax
+    2dc0:	66 89 45 d4          	mov    %ax,-0x2c(%rbp)
+    2dc4:	7e 26                	jle    2dec <vsnprintf+0x1cc>
+    2dc6:	66 2e 0f 1f 84 00 00 	nopw   %cs:0x0(%rax,%rax,1)
+    2dcd:	00 00 00 
+					if (str < end)
+    2dd0:	49 39 dc             	cmp    %rbx,%r12
+    2dd3:	76 07                	jbe    2ddc <vsnprintf+0x1bc>
+						*str = ' ';
+    2dd5:	c6 03 20             	movb   $0x20,(%rbx)
+    2dd8:	0f b7 45 d4          	movzwl -0x2c(%rbp),%eax
+
+		case FORMAT_TYPE_CHAR: {
+			char c;
+
+			if (!(spec.flags & LEFT)) {
+				while (--spec.field_width > 0) {
+    2ddc:	83 e8 01             	sub    $0x1,%eax
+					if (str < end)
+						*str = ' ';
+					++str;
+    2ddf:	48 83 c3 01          	add    $0x1,%rbx
+
+		case FORMAT_TYPE_CHAR: {
+			char c;
+
+			if (!(spec.flags & LEFT)) {
+				while (--spec.field_width > 0) {
+    2de3:	66 85 c0             	test   %ax,%ax
+    2de6:	66 89 45 d4          	mov    %ax,-0x2c(%rbp)
+    2dea:	7f e4                	jg     2dd0 <vsnprintf+0x1b0>
+						*str = ' ';
+					++str;
+
+				}
+			}
+			c = (unsigned char) va_arg(args, int);
+    2dec:	41 8b 55 00          	mov    0x0(%r13),%edx
+    2df0:	83 fa 30             	cmp    $0x30,%edx
+    2df3:	0f 83 2f 01 00 00    	jae    2f28 <vsnprintf+0x308>
+    2df9:	89 d0                	mov    %edx,%eax
+    2dfb:	49 03 45 10          	add    0x10(%r13),%rax
+    2dff:	83 c2 08             	add    $0x8,%edx
+    2e02:	41 89 55 00          	mov    %edx,0x0(%r13)
+			if (str < end)
+    2e06:	4c 39 e3             	cmp    %r12,%rbx
+						*str = ' ';
+					++str;
+
+				}
+			}
+			c = (unsigned char) va_arg(args, int);
+    2e09:	8b 00                	mov    (%rax),%eax
+			if (str < end)
+    2e0b:	73 02                	jae    2e0f <vsnprintf+0x1ef>
+						*str = ' ';
+					++str;
+
+				}
+			}
+			c = (unsigned char) va_arg(args, int);
+    2e0d:	88 03                	mov    %al,(%rbx)
+			if (str < end)
+				*str = c;
+			++str;
+			while (--spec.field_width > 0) {
+    2e0f:	0f b7 45 d4          	movzwl -0x2c(%rbp),%eax
+				}
+			}
+			c = (unsigned char) va_arg(args, int);
+			if (str < end)
+				*str = c;
+			++str;
+    2e13:	48 83 c3 01          	add    $0x1,%rbx
+			while (--spec.field_width > 0) {
+    2e17:	83 e8 01             	sub    $0x1,%eax
+    2e1a:	66 85 c0             	test   %ax,%ax
+    2e1d:	66 89 45 d4          	mov    %ax,-0x2c(%rbp)
+    2e21:	7e 21                	jle    2e44 <vsnprintf+0x224>
+    2e23:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+				if (str < end)
+    2e28:	49 39 dc             	cmp    %rbx,%r12
+    2e2b:	76 07                	jbe    2e34 <vsnprintf+0x214>
+					*str = ' ';
+    2e2d:	c6 03 20             	movb   $0x20,(%rbx)
+    2e30:	0f b7 45 d4          	movzwl -0x2c(%rbp),%eax
+			}
+			c = (unsigned char) va_arg(args, int);
+			if (str < end)
+				*str = c;
+			++str;
+			while (--spec.field_width > 0) {
+    2e34:	83 e8 01             	sub    $0x1,%eax
+				if (str < end)
+					*str = ' ';
+				++str;
+    2e37:	48 83 c3 01          	add    $0x1,%rbx
+			}
+			c = (unsigned char) va_arg(args, int);
+			if (str < end)
+				*str = c;
+			++str;
+			while (--spec.field_width > 0) {
+    2e3b:	66 85 c0             	test   %ax,%ax
+    2e3e:	66 89 45 d4          	mov    %ax,-0x2c(%rbp)
+    2e42:	7f e4                	jg     2e28 <vsnprintf+0x208>
+    2e44:	41 0f b6 06          	movzbl (%r14),%eax
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2e48:	4d 89 f7             	mov    %r14,%r15
+    2e4b:	e9 18 fe ff ff       	jmpq   2c68 <vsnprintf+0x48>
+			str += read;
+			break;
+		}
+
+    b. #va_arg对可变参数的获取
+    --------------------------
+    #wjx:可变参数在三个以内(%rcx，%r8，%r9)是通过寄存器传给上一个函数
+    #（如snprintf）的时候，
+    #这时可变参数是被放到了上一个函数的栈上
+		case FORMAT_TYPE_WIDTH:
+			spec.field_width = va_arg(args, int);
+    2e50:	41 8b 55 00          	mov    0x0(%r13),%edx
+    2e54:	83 fa 30             	cmp    $0x30,%edx
+    #%r13的位置（%edx）的值从0x18开始（第一个可变参数），
+    #如果大于等于0x30，说明大于等于四个参数，此时跳转到2f58
+    2e57:	0f 83 fb 00 00 00    	jae    2f58 <vsnprintf+0x338>
+    2e5d:	89 d0                	mov    %edx,%eax
+    #使用0x10(%r13)中地址加上0x(%r13)中保存的产即数值的的方式获取可变参数在栈上的
+    #的位置(可变参数原来在%ecx里，在vsprintf里放到了栈上)。
+    2e5f:	49 03 45 10          	add    0x10(%r13),%rax
+    #增加0x(%r13)里的立即数，为取下一个可变参数做准备
+    2e63:	83 c2 08             	add    $0x8,%edx
+    2e66:	41 89 55 00          	mov    %edx,0x0(%r13)
+    2e6a:	8b 00                	mov    (%rax),%eax
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2e6c:	4d 89 f7             	mov    %r14,%r15
+			str += read;
+			break;
+		}
+
+		case FORMAT_TYPE_WIDTH:
+			spec.field_width = va_arg(args, int);
+    2e6f:	66 89 45 d4          	mov    %ax,-0x2c(%rbp)
+    2e73:	41 0f b6 06          	movzbl (%r14),%eax
+			break;
+    2e77:	e9 ec fd ff ff       	jmpq   2c68 <vsnprintf+0x48>
+    2e7c:	0f 1f 40 00          	nopl   0x0(%rax)
+		fmt += read;
+
+		switch (spec.type) {
+		case FORMAT_TYPE_NONE: {
+			int copy = read;
+			if (str < end) {
+    2e80:	4c 39 e3             	cmp    %r12,%rbx
+    2e83:	73 23                	jae    2ea8 <vsnprintf+0x288>
+				if (copy > end - str)
+    2e85:	4c 89 e0             	mov    %r12,%rax
+					copy = end - str;
+				memcpy(str, old_fmt, copy);
+    2e88:	4c 89 fe             	mov    %r15,%rsi
+    2e8b:	48 89 df             	mov    %rbx,%rdi
+
+		switch (spec.type) {
+		case FORMAT_TYPE_NONE: {
+			int copy = read;
+			if (str < end) {
+				if (copy > end - str)
+    2e8e:	48 29 d8             	sub    %rbx,%rax
+    2e91:	48 89 4d b8          	mov    %rcx,-0x48(%rbp)
+    2e95:	48 39 c1             	cmp    %rax,%rcx
+    2e98:	48 63 d0             	movslq %eax,%rdx
+    2e9b:	48 0f 4e d1          	cmovle %rcx,%rdx
+					copy = end - str;
+				memcpy(str, old_fmt, copy);
+    2e9f:	e8 00 00 00 00       	callq  2ea4 <vsnprintf+0x284>
+    2ea4:	48 8b 4d b8          	mov    -0x48(%rbp),%rcx
+			}
+			str += read;
+    2ea8:	48 01 cb             	add    %rcx,%rbx
+    2eab:	41 0f b6 06          	movzbl (%r14),%eax
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2eaf:	4d 89 f7             	mov    %r14,%r15
+				if (copy > end - str)
+					copy = end - str;
+				memcpy(str, old_fmt, copy);
+			}
+			str += read;
+			break;
+    2eb2:	e9 b1 fd ff ff       	jmpq   2c68 <vsnprintf+0x48>
+    2eb7:	66 0f 1f 84 00 00 00 	nopw   0x0(%rax,%rax,1)
+    2ebe:	00 00 
+		case FORMAT_TYPE_WIDTH:
+			spec.field_width = va_arg(args, int);
+			break;
+
+		case FORMAT_TYPE_PRECISION:
+			spec.precision = va_arg(args, int);
+    2ec0:	41 8b 55 00          	mov    0x0(%r13),%edx
+    2ec4:	83 fa 30             	cmp    $0x30,%edx
+    2ec7:	0f 83 a3 00 00 00    	jae    2f70 <vsnprintf+0x350>
+    2ecd:	89 d0                	mov    %edx,%eax
+    2ecf:	49 03 45 10          	add    0x10(%r13),%rax
+    2ed3:	83 c2 08             	add    $0x8,%edx
+    2ed6:	41 89 55 00          	mov    %edx,0x0(%r13)
+    2eda:	8b 00                	mov    (%rax),%eax
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2edc:	4d 89 f7             	mov    %r14,%r15
+		case FORMAT_TYPE_WIDTH:
+			spec.field_width = va_arg(args, int);
+			break;
+
+		case FORMAT_TYPE_PRECISION:
+			spec.precision = va_arg(args, int);
+    2edf:	66 89 45 d6          	mov    %ax,-0x2a(%rbp)
+    2ee3:	41 0f b6 06          	movzbl (%r14),%eax
+			break;
+    2ee7:	e9 7c fd ff ff       	jmpq   2c68 <vsnprintf+0x48>
+    2eec:	0f 1f 40 00          	nopl   0x0(%rax)
+				*str = '%';
+			++str;
+			break;
+
+		default:
+			switch (spec.type) {
+    2ef0:	83 ea 08             	sub    $0x8,%edx
+    2ef3:	80 fa 0a             	cmp    $0xa,%dl
+    2ef6:	0f 87 f9 01 00 00    	ja     30f5 <vsnprintf+0x4d5>
+    2efc:	0f b6 d2             	movzbl %dl,%edx
+    2eff:	ff 24 d5 00 00 00 00 	jmpq   *0x0(,%rdx,8)
+    2f06:	66 2e 0f 1f 84 00 00 	nopw   %cs:0x0(%rax,%rax,1)
+    2f0d:	00 00 00 
+		case FORMAT_TYPE_STR:
+			str = string(str, end, va_arg(args, char *), spec);
+			break;
+
+		case FORMAT_TYPE_PTR:
+			str = pointer(fmt+1, str, end, va_arg(args, void *),
+    2f10:	49 8b 45 08          	mov    0x8(%r13),%rax
+    2f14:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    2f18:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    2f1c:	e9 d9 fd ff ff       	jmpq   2cfa <vsnprintf+0xda>
+    2f21:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+						*str = ' ';
+					++str;
+
+				}
+			}
+			c = (unsigned char) va_arg(args, int);
+    2f28:	49 8b 45 08          	mov    0x8(%r13),%rax
+    2f2c:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    2f30:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    2f34:	e9 cd fe ff ff       	jmpq   2e06 <vsnprintf+0x1e6>
+    2f39:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+			}
+			break;
+		}
+
+		case FORMAT_TYPE_STR:
+			str = string(str, end, va_arg(args, char *), spec);
+    2f40:	49 8b 45 08          	mov    0x8(%r13),%rax
+    2f44:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    2f48:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    2f4c:	e9 31 fe ff ff       	jmpq   2d82 <vsnprintf+0x162>
+    2f51:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+			str += read;
+			break;
+		}
+
+		case FORMAT_TYPE_WIDTH:
+			spec.field_width = va_arg(args, int);
+    #大于等于四个可变参数的情况，从栈传递参数。
+    #0x8(%r13)中保存的地址就是可变参数在栈上的位置，可变参数多于3个的情况，
+    #这样的可变参数放在ret之上。
+    2f58:	49 8b 45 08          	mov    0x8(%r13),%rax
+    2f5c:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    #将下一个可变参数的地址放到0x8(%r13)里。
+    2f60:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    2f64:	e9 01 ff ff ff       	jmpq   2e6a <vsnprintf+0x24a>
+    2f69:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+			break;
+
+		case FORMAT_TYPE_PRECISION:
+			spec.precision = va_arg(args, int);
+    2f70:	49 8b 45 08          	mov    0x8(%r13),%rax
+    2f74:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    2f78:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    2f7c:	e9 59 ff ff ff       	jmpq   2eda <vsnprintf+0x2ba>
+    2f81:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+	end = buf + size;
+
+	/* Make sure end is always >= buf */
+	if (end < buf) {
+		end = ((void *)-1);
+		size = end - buf;
+    2f88:	48 89 d8             	mov    %rbx,%rax
+    2f8b:	48 89 5d c0          	mov    %rbx,-0x40(%rbp)
+	str = buf;
+	end = buf + size;
+
+	/* Make sure end is always >= buf */
+	if (end < buf) {
+		end = ((void *)-1);
+    2f8f:	49 c7 c4 ff ff ff ff 	mov    $0xffffffffffffffff,%r12
+		size = end - buf;
+    2f96:	48 f7 d0             	not    %rax
+    2f99:	48 89 45 c8          	mov    %rax,-0x38(%rbp)
+    2f9d:	e9 bd fc ff ff       	jmpq   2c5f <vsnprintf+0x3f>
+    2fa2:	66 0f 1f 44 00 00    	nopw   0x0(%rax,%rax,1)
+					num = va_arg(args, ssize_t);
+				else
+					num = va_arg(args, size_t);
+				break;
+			case FORMAT_TYPE_PTRDIFF:
+				num = va_arg(args, ptrdiff_t);
+    2fa8:	41 8b 55 00          	mov    0x0(%r13),%edx
+    2fac:	83 fa 30             	cmp    $0x30,%edx
+    2faf:	73 57                	jae    3008 <vsnprintf+0x3e8>
+    2fb1:	89 d0                	mov    %edx,%eax
+    2fb3:	49 03 45 10          	add    0x10(%r13),%rax
+    2fb7:	83 c2 08             	add    $0x8,%edx
+    2fba:	41 89 55 00          	mov    %edx,0x0(%r13)
+    2fbe:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+    2fc2:	48 8b 10             	mov    (%rax),%rdx
+				break;
+			default:
+				num = va_arg(args, unsigned int);
+			}
+
+			str = number(str, end, num, spec);
+    2fc5:	0f b7 45 d6          	movzwl -0x2a(%rbp),%eax
+    2fc9:	44 0f b7 4d d4       	movzwl -0x2c(%rbp),%r9d
+    2fce:	48 89 df             	mov    %rbx,%rdi
+    2fd1:	44 0f b6 45 d2       	movzbl -0x2e(%rbp),%r8d
+    2fd6:	4c 89 e6             	mov    %r12,%rsi
+
+	while (*fmt) {
+		const char *old_fmt = fmt;
+		int read = format_decode(fmt, &spec);
+
+		fmt += read;
+    2fd9:	4d 89 f7             	mov    %r14,%r15
+				break;
+			default:
+				num = va_arg(args, unsigned int);
+			}
+
+			str = number(str, end, num, spec);
+    2fdc:	66 89 04 24          	mov    %ax,(%rsp)
+    2fe0:	e8 4b de ff ff       	callq  e30 <number.isra.2>
+    2fe5:	48 89 c3             	mov    %rax,%rbx
+    2fe8:	41 0f b6 06          	movzbl (%r14),%eax
+    2fec:	e9 77 fc ff ff       	jmpq   2c68 <vsnprintf+0x48>
+    2ff1:	0f 1f 80 00 00 00 00 	nopl   0x0(%rax)
+
+	if (size > 0) {
+		if (str < end)
+			*str = '\0';
+		else
+			end[-1] = '\0';
+    2ff8:	41 c6 44 24 ff 00    	movb   $0x0,-0x1(%r12)
+    2ffe:	e9 bf fc ff ff       	jmpq   2cc2 <vsnprintf+0xa2>
+    3003:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+					num = va_arg(args, ssize_t);
+				else
+					num = va_arg(args, size_t);
+				break;
+			case FORMAT_TYPE_PTRDIFF:
+				num = va_arg(args, ptrdiff_t);
+    3008:	49 8b 45 08          	mov    0x8(%r13),%rax
+    300c:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    3010:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3014:	eb a8                	jmp    2fbe <vsnprintf+0x39e>
+				break;
+			case FORMAT_TYPE_USHORT:
+				num = (unsigned short) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_SHORT:
+				num = (short) va_arg(args, int);
+    3016:	41 8b 55 00          	mov    0x0(%r13),%edx
+    301a:	83 fa 30             	cmp    $0x30,%edx
+    301d:	0f 83 f3 00 00 00    	jae    3116 <vsnprintf+0x4f6>
+    3023:	89 d0                	mov    %edx,%eax
+    3025:	49 03 45 10          	add    0x10(%r13),%rax
+    3029:	83 c2 08             	add    $0x8,%edx
+    302c:	41 89 55 00          	mov    %edx,0x0(%r13)
+    3030:	48 0f bf 10          	movswq (%rax),%rdx
+    3034:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+				break;
+    3038:	eb 8b                	jmp    2fc5 <vsnprintf+0x3a5>
+			case FORMAT_TYPE_LONG:
+				num = va_arg(args, long);
+				break;
+			case FORMAT_TYPE_SIZE_T:
+				if (spec.flags & SIGN)
+					num = va_arg(args, ssize_t);
+    303a:	41 8b 55 00          	mov    0x0(%r13),%edx
+				break;
+			case FORMAT_TYPE_LONG:
+				num = va_arg(args, long);
+				break;
+			case FORMAT_TYPE_SIZE_T:
+				if (spec.flags & SIGN)
+    303e:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+					num = va_arg(args, ssize_t);
+				else
+					num = va_arg(args, size_t);
+    3042:	83 fa 30             	cmp    $0x30,%edx
+    3045:	0f 83 2b 01 00 00    	jae    3176 <vsnprintf+0x556>
+    304b:	89 d0                	mov    %edx,%eax
+    304d:	49 03 45 10          	add    0x10(%r13),%rax
+    3051:	83 c2 08             	add    $0x8,%edx
+    3054:	41 89 55 00          	mov    %edx,0x0(%r13)
+    3058:	48 8b 10             	mov    (%rax),%rdx
+    305b:	e9 65 ff ff ff       	jmpq   2fc5 <vsnprintf+0x3a5>
+				break;
+			case FORMAT_TYPE_SHORT:
+				num = (short) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_INT:
+				num = (int) va_arg(args, int);
+    3060:	41 8b 55 00          	mov    0x0(%r13),%edx
+    3064:	83 fa 30             	cmp    $0x30,%edx
+    3067:	0f 83 e7 00 00 00    	jae    3154 <vsnprintf+0x534>
+    306d:	89 d0                	mov    %edx,%eax
+    306f:	49 03 45 10          	add    0x10(%r13),%rax
+    3073:	83 c2 08             	add    $0x8,%edx
+    3076:	41 89 55 00          	mov    %edx,0x0(%r13)
+    307a:	48 63 10             	movslq (%rax),%rdx
+    307d:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+				break;
+    3081:	e9 3f ff ff ff       	jmpq   2fc5 <vsnprintf+0x3a5>
+				break;
+			case FORMAT_TYPE_UBYTE:
+				num = (unsigned char) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_BYTE:
+				num = (signed char) va_arg(args, int);
+    3086:	41 8b 55 00          	mov    0x0(%r13),%edx
+    308a:	83 fa 30             	cmp    $0x30,%edx
+    308d:	0f 83 b0 00 00 00    	jae    3143 <vsnprintf+0x523>
+    3093:	89 d0                	mov    %edx,%eax
+    3095:	49 03 45 10          	add    0x10(%r13),%rax
+    3099:	83 c2 08             	add    $0x8,%edx
+    309c:	41 89 55 00          	mov    %edx,0x0(%r13)
+    30a0:	48 0f be 10          	movsbq (%rax),%rdx
+    30a4:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+				break;
+    30a8:	e9 18 ff ff ff       	jmpq   2fc5 <vsnprintf+0x3a5>
+				break;
+			case FORMAT_TYPE_PTRDIFF:
+				num = va_arg(args, ptrdiff_t);
+				break;
+			case FORMAT_TYPE_UBYTE:
+				num = (unsigned char) va_arg(args, int);
+    30ad:	41 8b 55 00          	mov    0x0(%r13),%edx
+    30b1:	83 fa 30             	cmp    $0x30,%edx
+    30b4:	0f 83 ab 00 00 00    	jae    3165 <vsnprintf+0x545>
+    30ba:	89 d0                	mov    %edx,%eax
+    30bc:	49 03 45 10          	add    0x10(%r13),%rax
+    30c0:	83 c2 08             	add    $0x8,%edx
+    30c3:	41 89 55 00          	mov    %edx,0x0(%r13)
+    30c7:	0f b6 10             	movzbl (%rax),%edx
+    30ca:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+				break;
+    30ce:	e9 f2 fe ff ff       	jmpq   2fc5 <vsnprintf+0x3a5>
+			case FORMAT_TYPE_BYTE:
+				num = (signed char) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_USHORT:
+				num = (unsigned short) va_arg(args, int);
+    30d3:	41 8b 55 00          	mov    0x0(%r13),%edx
+    30d7:	83 fa 30             	cmp    $0x30,%edx
+    30da:	73 4b                	jae    3127 <vsnprintf+0x507>
+    30dc:	89 d0                	mov    %edx,%eax
+    30de:	49 03 45 10          	add    0x10(%r13),%rax
+    30e2:	83 c2 08             	add    $0x8,%edx
+    30e5:	41 89 55 00          	mov    %edx,0x0(%r13)
+    30e9:	0f b7 10             	movzwl (%rax),%edx
+    30ec:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+				break;
+    30f0:	e9 d0 fe ff ff       	jmpq   2fc5 <vsnprintf+0x3a5>
+				break;
+			case FORMAT_TYPE_INT:
+				num = (int) va_arg(args, int);
+				break;
+			default:
+				num = va_arg(args, unsigned int);
+    30f5:	41 8b 55 00          	mov    0x0(%r13),%edx
+    30f9:	83 fa 30             	cmp    $0x30,%edx
+    30fc:	73 37                	jae    3135 <vsnprintf+0x515>
+    30fe:	89 d0                	mov    %edx,%eax
+    3100:	49 03 45 10          	add    0x10(%r13),%rax
+    3104:	83 c2 08             	add    $0x8,%edx
+    3107:	41 89 55 00          	mov    %edx,0x0(%r13)
+    310b:	8b 10                	mov    (%rax),%edx
+    310d:	0f b6 4d d1          	movzbl -0x2f(%rbp),%ecx
+    3111:	e9 af fe ff ff       	jmpq   2fc5 <vsnprintf+0x3a5>
+				break;
+			case FORMAT_TYPE_USHORT:
+				num = (unsigned short) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_SHORT:
+				num = (short) va_arg(args, int);
+    3116:	49 8b 45 08          	mov    0x8(%r13),%rax
+    311a:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    311e:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3122:	e9 09 ff ff ff       	jmpq   3030 <vsnprintf+0x410>
+				break;
+			case FORMAT_TYPE_BYTE:
+				num = (signed char) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_USHORT:
+				num = (unsigned short) va_arg(args, int);
+    3127:	49 8b 45 08          	mov    0x8(%r13),%rax
+    312b:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    312f:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3133:	eb b4                	jmp    30e9 <vsnprintf+0x4c9>
+				break;
+			case FORMAT_TYPE_INT:
+				num = (int) va_arg(args, int);
+				break;
+			default:
+				num = va_arg(args, unsigned int);
+    3135:	49 8b 45 08          	mov    0x8(%r13),%rax
+    3139:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    313d:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3141:	eb c8                	jmp    310b <vsnprintf+0x4eb>
+				break;
+			case FORMAT_TYPE_UBYTE:
+				num = (unsigned char) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_BYTE:
+				num = (signed char) va_arg(args, int);
+    3143:	49 8b 45 08          	mov    0x8(%r13),%rax
+    3147:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    314b:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    314f:	e9 4c ff ff ff       	jmpq   30a0 <vsnprintf+0x480>
+				break;
+			case FORMAT_TYPE_SHORT:
+				num = (short) va_arg(args, int);
+				break;
+			case FORMAT_TYPE_INT:
+				num = (int) va_arg(args, int);
+    3154:	49 8b 45 08          	mov    0x8(%r13),%rax
+    3158:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    315c:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3160:	e9 15 ff ff ff       	jmpq   307a <vsnprintf+0x45a>
+				break;
+			case FORMAT_TYPE_PTRDIFF:
+				num = va_arg(args, ptrdiff_t);
+				break;
+			case FORMAT_TYPE_UBYTE:
+				num = (unsigned char) va_arg(args, int);
+    3165:	49 8b 45 08          	mov    0x8(%r13),%rax
+    3169:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    316d:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3171:	e9 51 ff ff ff       	jmpq   30c7 <vsnprintf+0x4a7>
+				break;
+			case FORMAT_TYPE_SIZE_T:
+				if (spec.flags & SIGN)
+					num = va_arg(args, ssize_t);
+				else
+					num = va_arg(args, size_t);
+    3176:	49 8b 45 08          	mov    0x8(%r13),%rax
+    317a:	48 8d 50 08          	lea    0x8(%rax),%rdx
+    317e:	49 89 55 08          	mov    %rdx,0x8(%r13)
+    3182:	e9 d1 fe ff ff       	jmpq   3058 <vsnprintf+0x438>
+	char *str, *end;
+	struct printf_spec spec = {0};
+
+	/* Reject out-of-range values early.  Large positive sizes are
+	   used for unknown buffer sizes. */
+	if (WARN_ON_ONCE((int) size < 0))
+    3187:	80 3d 00 00 00 00 00 	cmpb   $0x0,0x0(%rip)        # 318e <vsnprintf+0x56e>
+    318e:	75 18                	jne    31a8 <vsnprintf+0x588>
+    3190:	be 7c 06 00 00       	mov    $0x67c,%esi
+    3195:	48 c7 c7 00 00 00 00 	mov    $0x0,%rdi
+    319c:	e8 00 00 00 00       	callq  31a1 <vsnprintf+0x581>
+    31a1:	c6 05 00 00 00 00 01 	movb   $0x1,0x0(%rip)        # 31a8 <vsnprintf+0x588>
+		return 0;
+    31a8:	31 c0                	xor    %eax,%eax
+    31aa:	e9 18 fb ff ff       	jmpq   2cc7 <vsnprintf+0xa7>
+    31af:	90                   	nop
+

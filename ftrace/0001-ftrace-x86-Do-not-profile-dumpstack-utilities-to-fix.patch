@@ -1,0 +1,123 @@
+From 7df42448cbf3c1ce1c6e392d94bad0f16c068ab8 Mon Sep 17 00:00:00 2001
+From: Jiaxing Wang <wangjiaxing@insigma.com.cn>
+Date: Sat, 19 Apr 2014 10:20:10 +0800
+Subject: [PATCH RESEND] ftrace/x86:Do not profile dumpstack utilities to fix
+ stack trace output
+
+When function_graph tracer is enabled, we get stack trace like this:
+
+         Depth    Size   Location    (88 entries)
+         -----    ----   --------
+   0)     3232       0   update_curr+0xe/0x1e0
+   1)     3232       0   dump_trace+0xb5/0x1b0
+   2)     3232       0   ftrace_ops_list_func+0xe6/0x100
+   3)     3232      68   ftrace_call+0x5/0xb
+   4)     3164      92   enqueue_entity+0x38/0xe20
+   5)     3072       0   return_to_handler+0x0/0xf
+   6)     3072      80   save_stack_trace+0x30/0x50
+   7)     2992       0   return_to_handler+0x0/0xf
+   8)     2992      28   stack_trace_call+0x119/0x340
+   9)     2964       0   return_to_handler+0x0/0xf
+  10)     2964      12   enqueue_task_fair+0x47/0x7e0
+  11)     2952       0   return_to_handler+0x0/0xf
+  12)     2952      16   enqueue_task+0x45/0x70
+  ... ...
+
+The 'save_stack_trace+0x30/0x50' and 'stack_trace_call+0x119/0x340'
+entries are misplaced below the ftrace_ops_list_func and ftrace_call entries,
+which looks very confusing.
+
+And dump_stack() is also affected when function_graph tracer is enabled:
+
+  [  425.353391] Call Trace:
+  [  425.353449]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.353496]  [<c1012546>] print_context_stack+0xc6/0xd0
+  [  425.353547]  [<c108ab84>] enqueue_entity+0x894/0xe60
+  [  425.353597]  [<c107b4c5>] ? enqueue_task+0x45/0x70
+  [  425.353649]  [<c108b159>] ? enqueue_task_fair+0x9/0x7e0
+  [  425.353694]  [<c107b4c5>] ? enqueue_task+0x45/0x70
+  [  425.353743]  [<c1041037>] ? prepare_ftrace_return+0x77/0xa0
+  [  425.353791]  [<c108b159>] ? enqueue_task_fair+0x9/0x7e0
+  [  425.353856]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.353901]  [<c10116b5>] dump_trace+0xb5/0x1b0
+  [  425.353958]  [<c107b4dd>] ? enqueue_task+0x5d/0x70
+  [  425.354002]  [<c107b436>] ? update_rq_clock.part.80+0x6/0x50
+  [  425.354074]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.354120]  [<c1012666>] show_trace_log_lvl+0x46/0x50
+  [  425.354178]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.354222]  [<c1011802>] show_stack_log_lvl+0x52/0xe0
+  [  425.354272]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.354317]  [<c10126c6>] show_stack+0x26/0x50
+  [  425.354369]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.354415]  [<c1643be1>] dump_stack+0x41/0x52
+  [  425.354483]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.354527]  [<c108b197>] enqueue_task_fair+0x47/0x7e0
+  [  425.354576]  [<c16531c1>] ftrace_graph_caller+0x19/0x19
+  [  425.354621]  [<c107b4c5>] enqueue_task+0x45/0x70
+  ... ...
+
+This happens because the functions in the route of stack_trace and
+dump_stack() get traced by function_graph tracer, their return addresses
+on stack are replaced by 'return_to_handler' and their real return addresses
+are saved in current->ret_stack[]. When dumping the stack, their
+'return_to_handler' on stack are skipped but not their corresponding
+current->ret_stack[] entries which then are matched with other function's
+'return_to_handler' on the stack and resulting the wrong output above, as
+illustrated below:
+
+Here is the stack_trace case:
+  stack                               current->ret_stack[]
+  -----                               --------------------
+  return_to_handler                   print_context_stack+0xc6/0xd0
+  return_to_handler                   dump_trace+0xb5/0x1b0
+  return_to_handler                   save_stack_trace+0x30/0x50
+  return_to_handler                   stack_trace_call+0x119/0x340
+  ftrace_ops_listfunc+0xe6/0x100
+  ftrace_call+0x5/0xb
+
+stack_trace dump stack from the return address of dump_trace(), so the first
+two 'return_to_handler' entries are skipped but not the current->ret_stack[]
+entries.
+
+And the following is the dump_stack() case:
+
+  stack                               current->ret_stack[]
+  -----                               --------------------
+  return_to_handler                   print_context_stack+0xc6/0xd0
+  return_to_handler                   dump_trace+0xb5/0x1b0
+  return_to_handler                   show_trace_log_lvl+0x46/0x50
+  return_to_handler                   show_stack_log_lvl+0x52/0xe0
+  return_to_handler                   show_stack+0x26/0x50
+  return_to_handler                   dump_stack+0x41/0x52
+
+dump_stack() dump stack from the return address of show_stack(),
+so the first five 'return_to_handler' entries on stack are skipped but not
+the current->ret_stack[] entries.
+
+So the problem is caused by dumpstack utilities get traced by function_graph
+tracer, and disable the profiling of them fixes this.
+
+Signed-off-by: Jiaxing Wang <wangjiaxing@insigma.com.cn>
+Acked-by: Steven Rostedt <rostedt@goodmis.org>
+---
+ arch/x86/kernel/Makefile | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/x86/kernel/Makefile b/arch/x86/kernel/Makefile
+index f4d9600..917c82e 100644
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -14,6 +14,10 @@ CFLAGS_REMOVE_pvclock.o = -pg
+ CFLAGS_REMOVE_kvmclock.o = -pg
+ CFLAGS_REMOVE_ftrace.o = -pg
+ CFLAGS_REMOVE_early_printk.o = -pg
++CFLAGS_REMOVE_dumpstack.o = -pg
++CFLAGS_REMOVE_dumpstack_32.o = -pg
++CFLAGS_REMOVE_dumpstack_64.o = -pg
++CFLAGS_REMOVE_stacktrace.o = -pg
+ endif
+ 
+ CFLAGS_irq.o := -I$(src)/../include/asm/trace
+-- 
+1.9.1
+

@@ -1,0 +1,246 @@
+fs/open.c
+do_sys_open()
+        |_get_unused_fd_flags()
+        |_do_filp_open()
+        |_fsnotify_open()
+        |_fd_install()
+get_unused_fd_flags()申请空闲fd号，_do_filp_open打开文件并返回struct file结构，_fd_install将fd和struct file结合在一起。
+fs/namei.c
+do_filp_open()-->path_openat()
+                                   |_get_empty_filp()
+                                   |_path_init()
+                                   |_link_path_walk()
+                                   |_do_last()
+这里完成对目标路径的搜索工作，首先在do_filp_open()的栈上分配了一个数据结构struct nameidata nd;这个数据结构在搜索过程中用来保存已经搜索到的目录项（path component）。
+path_init初始化，设置搜索的起点为根目录（nd->path = nd->root;）或当前目录（nd->path = fs->pwd;），并设置nd->inode。
+link_path_walk完成大部分的路径搜索工作，待link_path_walk返回后，其参数nd的nd->last 里保存的是目标路径中最后一部分的目录/文件名， nd->last_type则是其类型，注意这个目录项还没有搜索，也就没有建立其dentry和inode结构（假设以前也没有访问过）。而nd->path和nd->inode则对应上一层目录项的path和inode，此时，上面各层目录项的dentry和inode结构都已经创建。
+
+link_path_walk()
+这个函数的主体结构是一个for循环，逐层扫描搜索目标路径中的各层目录项：
+static int link_path_walk(const char *name, struct nameidata *nd)
+{
+ /* At this point we know we have a real path component. */
+ for(;;) {
+     struct qstr this;    //this用来保存本次循环所要寻找的、当前path component
+ 
+     //遍历的过程中需要对目标路径中的各层目录都有MAY_EXEC权限，这里通过inode_permission(nd->inode, MAY_EXEC)对各层路径进行检查。
+     err = may_lookup(nd);
+
+     //计算当前path component的hash值并保存在this.hash中（32位），并返回当前component的长度
+     //例如第一次进入循环解析/home/abc，这里就会返回'home'的长度为４,并计算'home'的hash值
+     len = hash_name(name, &this.hash);
+     this.name = name;
+     this.len = len;
+
+     type = LAST_NORM;
+     //判断所找到的path component是否为.或..
+     if (name[0] == '.') switch (len) {
+         case 2:
+             if (name[1] == '.') {
+                 type = LAST_DOTDOT;
+                 nd->flags |= LOOKUP_JUMPED;
+             }
+             break;
+         case 1:
+             type = LAST_DOT;
+     }
+     //找到了最后一个path component，并且其是一个文件而非目录，如'/home/abc'
+     if (!name[len])
+         goto last_component;
+     /*
+      * If it wasn't NUL, we know it was '/'. Skip that
+      * slash, and continue until no more slashes.
+      */
+     do {
+         len++;
+     } while (unlikely(name[len] == '/'));
+     if (!name[len])
+         goto last_component;  //当前component是最后一个component，并且它是目录，如'/home/abc/'
+     //当前component不是最后一个component，使name指向下一个component，以在下次循环中使用
+     name += len;    
+
+     //寻找this中保存的当前component，即寻找或创建其dentry和inode结构
+     //next用于临时保存当前component的path信息，包括vfsmount,dentry结构等，在walk_component
+     //中还会通过path_to_nameidata把这些信息存放到nd里。
+     err = walk_component(nd, &next, &this, type, LOOKUP_FOLLOW);
+     //因为这里寻找到的肯定不是last component，所以一定是个目录，就要检查其inode是否可以进行
+     //lookup操作。即其inode->i_op->lookup是否存在。
+     if (can_lookup(nd->inode))
+         continue;
+     err = -ENOTDIR; 
+     break;
+     /* here ends the main loop */
+     //找到了最后一个component，将其qstr保存到last里，注意这个last component还没有进行查找或
+     //创建dentry、inode等，这些留到后面do_last()时进行。
+last_component: 
+     nd->last = this;
+     nd->last_type = type;
+     return 0;
+ }
+}
+
+walk_component
+walk_component()
+        |_lookup_fast()
+                |___d_lookup()
+                |_d_revalidate()
+                |_follow_managed()
+        |_lookup_slow()
+                |___lookup_hash()
+                        |_lookup_dcache()
+                                |_d_lookup()
+                                |_d_alloc()
+                        |_lookup_real()
+                                |_dir->i_op->lookup(dir, dentry, flags);
+                |_follow_managed()
+        |_should_follow_link()
+        |_path_to_nameidata()
+        |_ nd->inode = inode;
+        先通过lookup_fast-->_d_lookup()在dentry的hash数组dentry_hashtable 里找，如果找不到就通过
+lookup_slow()-->lookup_dcache()-->d_lookup()再寻找一次，如果还是找不到，就通过d_alloc()分配一个dentry结构，然后以其为参数，调用lookup_real()，进而调用dir->i_op->lookup(dir, dentry, flags);从相应的文件系统中读出相应的信息以填充完善dentry结构并分配inode结构，这也是dir->i_op->lookup()的作用，创建inode的过程可以借助VFS的接口。这可以从下面sysfs和ext2系统lookup函数的例子可以看出[1]。
+        walk_component()里找到相应的dentry后，还通过path_to_nameidata将其设置到nd里，所以
+walk_component返回时nd已经更新为本轮循环要找的当前component，下面就要通过循环寻找下一个component。
+        对于正常文件walk_component返回０,返回小于０的值表示出错，大于０表示是链接。下面的do_last()的返回值也是这样的。
+        下面是path_openat里的do_last函数：
+do_last
+        |_lookup_fast
+        |_lookup_open
+                |_lookup_dcache
+                |_lookup_real
+                |_security_path_mknod
+                |_vfs_create
+        |_follow_managed
+        |_path_to_nameidata
+        |_may_open()
+        |_finish_open()
+                |_do_dentry_open()
+                        |_ f->f_op = fops_get(inode->i_fop);
+                        |_ open = f->f_op->open/open()
+      先通过lookup_fast找一下，如果能在hash表里找到就直接跳到标号finish_lookup处调用_path_to_nameidata，否则就要通过lookup_open-->lookup_dcache/lookup_real分配并设置目标文件或目录的dentry与结构。同时lookup_open还有个功能就是如果目标文件不存在，而open时flags中又有O_CREAT标志，则通过vfs_create创建相应文件。
+      而在do_last()中调用的path_to_nameidata()，又进一步把找到的目标目录或文件的dentry和mnt设置到
+nd的path里： nd->path.dentry = path->dentry; nd->path.mnt = path->mnt;所以，从do_last返回后，参数nd(nd->path)中保存的是目标路径的最后一个目录项（因为其已经搜索到），do_last()第二个参数path同样保存这个目录项，这些可以在下面的follow_link中使用。
+      然后，通过may_open()是否可以以相应的权限打开相应的文件。
+      最后，又通过finish_open把相应的file结构和dentry结构关联起来，open的主要工作完成了。
+      
+
+－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－
+[1]sysfs和ext2文件系统里的lookup函数
+fs/sysfs/dir.c
+const struct inode_operations sysfs_dir_inode_operations = {
+ .lookup = sysfs_lookup,
+ .permission = sysfs_permission,
+ .setattr = sysfs_setattr,
+ .getattr = sysfs_getattr,
+ .setxattr = sysfs_setxattr,
+};
+static struct dentry * sysfs_lookup(struct inode *dir, struct dentry *dentry,
+ unsigned int flags)
+{
+ struct dentry *ret = NULL;
+ struct dentry *parent = dentry->d_parent;
+ struct sysfs_dirent *parent_sd = parent->d_fsdata;
+ struct sysfs_dirent *sd;
+ struct inode *inode;
+ enum kobj_ns_type type;
+ const void *ns;
+
+ mutex_lock(&sysfs_mutex);
+
+ type = sysfs_ns_type(parent_sd);
+ ns = sysfs_info(dir->i_sb)->ns[type];
+
+ sd = sysfs_find_dirent(parent_sd, ns, dentry->d_name.name);
+
+ /* no such entry */
+ if (!sd) {
+ ret = ERR_PTR(-ENOENT);
+ goto out_unlock;
+ }
+ dentry->d_fsdata = sysfs_get(sd);
+
+ /* attach dentry and inode */
+inode = sysfs_get_inode(dir->i_sb, sd);
+ if (!inode) {
+ ret = ERR_PTR(-ENOMEM);
+ goto out_unlock;
+ }
+
+ /* instantiate and hash dentry */
+ ret = d_materialise_unique(dentry, inode);
+ out_unlock:
+ mutex_unlock(&sysfs_mutex);
+ return ret;
+}
+每种文件系统要提供其创建并设置inode的函数，如：
+fs/sysfs/inode.c
+struct inode * sysfs_get_inode(struct super_block *sb, struct sysfs_dirent *sd)
+{
+ struct inode *inode;
+
+ inode = iget_locked(sb, sd->s_ino);
+ if (inode && (inode->i_state & I_NEW))
+ sysfs_init_inode(sd, inode);
+
+ return inode;
+}
+这里使用了VFS里的接口iget_locked。
+－－－－－－－－－－－－－－－－－－－－－－－－
+又如ext2:
+fs/ext2/namei.c
+const struct inode_operations ext2_dir_inode_operations = {
+ .create = ext2_create,
+ .lookup = ext2_lookup,
+... ...
+};
+其中，
+ext2_lookup-->ext2_iget()
+                               |_iget_locked()
+                               |_ext2_get_inode()
+
+看目录项的file_operations操作：
+fs/ext2/dir.c
+const struct file_operations ext2_dir_operations = {
+ .llseek = generic_file_llseek,
+ .read = generic_read_dir,
+ .readdir = ext2_readdir,
+ .unlocked_ioctl = ext2_ioctl,
+#ifdef CONFIG_COMPAT
+ .compat_ioctl = ext2_compat_ioctl,
+#endif
+ .fsync = ext2_fsync,
+};
+
+
+文件与目录虽然都有inode，但其inode_operations操作显然不同，没有lookup函数：
+fs/ext2/file.c
+const struct inode_operations ext2_file_inode_operations = {
+#ifdef CONFIG_EXT2_FS_XATTR
+ .setxattr = generic_setxattr,
+ .getxattr = generic_getxattr,
+ .listxattr = ext2_listxattr,
+ .removexattr = generic_removexattr,
+#endif
+ .setattr = ext2_setattr,
+ .get_acl = ext2_get_acl,
+ .fiemap = ext2_fiemap,
+};
+
+文件操作在file_operation里，不在inode_operations里：
+fs/ext2/file.c
+const struct file_operations ext2_file_operations = {
+ .llseek = generic_file_llseek,
+ .read = do_sync_read,
+ .write = do_sync_write,
+ .aio_read = generic_file_aio_read,
+ .aio_write = generic_file_aio_write,
+ .unlocked_ioctl = ext2_ioctl,
+#ifdef CONFIG_COMPAT
+ .compat_ioctl = ext2_compat_ioctl,
+#endif
+ .mmap = generic_file_mmap,
+ .open = dquot_file_open,
+ .release = ext2_release_file,
+ .fsync = ext2_fsync,
+ .splice_read = generic_file_splice_read,
+ .splice_write = generic_file_splice_write,
+};

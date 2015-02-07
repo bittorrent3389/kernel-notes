@@ -1,0 +1,10 @@
+drm_ioctls:
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETCRTC, drm_mode_setcrtc, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
+	drm_mode_setcrtc
+		|_drm_mode_set_config_internal
+			|_ret = crtc->funcs->set_config(set);
+			  drm_crtc_helper_set_config
+			  	|_drm_crtc_helper_set_mode
+					|_crtc_funcs->mode_set
+					  vc4_crtc_mode_set
+					  	|_bcm_mailbox_write

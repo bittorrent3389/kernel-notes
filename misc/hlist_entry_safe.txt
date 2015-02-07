@@ -1,0 +1,19 @@
+
+#define hlist_entry(ptr, type, member) container_of(ptr,type,member)
+
+#define hlist_entry_safe(ptr, type, member) \
+    ({ typeof(ptr) ____ptr = (ptr); \
+       ____ptr ? hlist_entry(____ptr, type, member) : NULL; \
+    })
+
+这个hlist_entry_safe是为了防止什么情况？
+防止为空？为何要使用____ptr而不能使用(ptr)？
+
+见commit f65846a1800ef8c48d1ae1973c30dae4c356a800
+之前的版本就是使用(ptr)的，但是会引用两次ptr，所以就有第一次不为NULL，第二次为NULL的情况：
+
+ #define hlist_entry_safe(ptr, type, member) \
+-       (ptr) ? hlist_entry(ptr, type, member) : NULL
++       ({ typeof(ptr) ____ptr = (ptr); \
++          ____ptr ? hlist_entry(____ptr, type, member) : NULL; \
++       })

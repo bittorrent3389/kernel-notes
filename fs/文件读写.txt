@@ -1,0 +1,41 @@
+vfs只是和page cache打交道，当page cache里没有相应页面时就要到底层提交io请求，而提交io请求这个过程实际上是异步的（磁盘完成操作后会通过中断来通知）。
+
+而非directIO读操作时的阻塞等待是通过vfs层的睡眠等待来实现的：
+sys_read-->vfs_read-->file->f_op->read-->do_sync_read-->f_op->aio_read-->generic_file_aio_read-->
+do_generic_file_read-->do_generic_file_read()-->
+        lock_page_killable() //lock page
+        file->f_mapping->a_ops->readpage()(mpage_readpage) //submit io request
+      lock_page_killable()    //wait till PG_UNLOCK
+见
+http://hi.baidu.com/_kouu/item/4e9db87580328244ef1e53d0
+http://hi.baidu.com/_kouu/item/2b3cfecd49c17d10515058d9
+
+而AIO下的direct IO则没有等待过程，所以发出io请求就返回了。
+
+而对于普通的同步direct IO，返回前的睡眠等待是通过do_sync_read里完成的？？？
+ssize_t do_sync_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos)
+{
+ struct iovec iov = { .iov_base = buf, .iov_len = len };
+ struct kiocb kiocb;
+ ssize_t ret;
+
+
+ init_sync_kiocb(&kiocb, filp);
+ kiocb.ki_pos = *ppos;
+ kiocb.ki_left = len;
+ kiocb.ki_nbytes = len;
+
+
+ for (;;) {
+ ret = filp->f_op->aio_read(&kiocb, &iov, 1, kiocb.ki_pos);
+ if (ret != -EIOCBRETRY)
+ break;
+ wait_on_retry_sync_kiocb(&kiocb);
+ }
+
+
+ if (-EIOCBQUEUED == ret)
+ ret = wait_on_sync_kiocb(&kiocb);
+ *ppos = kiocb.ki_pos;
+ return ret;
+}

@@ -1,0 +1,110 @@
+
+-pg   
+       gcc可以通过选项-pg在每个函数开始部分，确切地说是在函数的prologue之后插入mcount调用，
+来进行函数调用统计，即profile，见man gcc:
+
+
+       -pg Generate extra code to write profile information suitable for the analysis program gprof.  You must use
+this option when compiling the source files you want data about, and you must also use it when linking.
+
+
+    默认情况下使用这个选项编译后的程序在执行时，会在生成一个gmon.out文件，这个文件可以被gprof读取来生成程序的profile
+信息。也可以自己重写mcount函数并连接，这样每个函数调用前都会调用自己的mcount函数:
+
+
+//mcount.c
+#include <stdio.h>
+void  mcount()
+{        
+    printf("@@@@@@@\n");
+}
+//main.c
+#include <stdlib.h>
+#include <stdio.h>
+extern void mcount(void);
+void b(int i)
+{
+        printf("b:%d\n", i);
+}
+int a(int i)
+{
+        b(i);
+        return 3;
+}
+int main()
+{
+        int i = 3;
+        int k = a(i);
+        return k;
+}
+//gcc -c mcount.c
+//gcc -c main.c -pg
+//gcc mcount.o main.o -o test
+
+
+-mfentry
+    With gcc 4.6.0 the -mfentry feature places the function profiling call at the start of the function. When this is used, the call is to __fentry__ and not mcount.
+    也就是说在使用了-pg选项的情况下，通过使用-mfentry选项可以将profile函数放到函数的prologue部分之前，实际上是放到
+函数的最开始，还有一个不同是此时profile函数不再是mcount，而是改名成了__fentry__，见man gcc:
+       -mfentry
+       -mno-fentry
+       If profiling is active (-pg), put the profiling counter call before the prologue.  Note: On x86
+architectures the attribute "ms_hook_prologue" isn't possible at the moment for -mfentry and -pg.
+    所以为了使用上面的例子可以将mcount改名为__fentry__，并使用如下的命令来编译：
+gcc -c mcount.c
+gcc -c main.c -pg -mfentry
+gcc mcount.o main.o -o test
+    objdump -d test可以看到函数的一开始都调用了__fentry__:
+    080484a1 <a>:
+    80484a1:   e8 c7 ff ff ff          call   804846d <__fentry__>
+    ... ...
+
+
+    080484be <main>:
+    80484be: e8 aa ff ff ff          call   804846d <__fentry__>
+    ... ...
+    见下面的讨论：
+    https://lwn.net/Articles/441509/
+
+
+Here's a heads up on -pg -mfentry. The -mfentry on top of -pg uses a different mechanism other than mcount. It adds a call to __fentry__ instead of mcount, and uses this at the beginning of the function:
+
+
+000000000000009e <atomic_long_add>:
+      9e:       e8 00 00 00 00          callq  a3 <atomic_long_add+0x5>
+                        9f: R_X86_64_PC32       __fentry__-0x4
+      a3:       55                      push   %rbp
+      a4:       48 89 e5                mov    %rsp,%rbp
+Instead of:
+
+
+00000000000000c4 <atomic_long_add>:
+      c4:       55                      push   %rbp
+      c5:       48 89 e5                mov    %rsp,%rbp
+      c8:       e8 00 00 00 00          callq  cd <atomic_long_add+0x9>
+                        c9: R_X86_64_PC32       mcount-0x4
+      cd:       f0 48 01 3e             lock add %rdi,(%rsi)
+It is currently only supported in gcc 4.6.0 and higher on x86, and not on the other platforms (that I know of). I will be converting Ftrace to use this when available which will also add a lot more features to function tracing.
+
+
+This is just forward looking, but if LLVM is to be a competitor of gcc, it will definitely need to support this.
+              
+---------->
+If I read this correctly, the only real difference is that the __fentry__ call happens before pushing %rbp and establishing a stack frame, whereas with mcount, it's a true nested call.
+Aside from a shorter stack depth and a different label, could you expand on what the advantages are? You mention that it will allow you to add a lot more features to Ftrace. (A link is fine if you have one handy.)
+Thanks!
+------------>
+The first main benefit of this, is that you no longer need to have stack frames enabled. The -pg option with mcount requires stack frames. With -pg and -mfentry, you no longer have to have stack frames, which gives a bit of a performance boost.
+The next part is that the callbacks to the function tracer can now get access to the registers. Because the stack frame is set up before mcount is called, you lose out on having the stack and registers holding function parameters by the time mcount is called. With the fentry right at the beginning of the function, you now have full access to the registers and stack frame as it was given to the function, which means we now have the possibility of tracing the data in the function parameters as well.
+The third part and the most extreme, is that because fentry is called as the very first instruction of the function, we could possibly now "hijack" the function completely! That is, we could call a different function and return to the original caller without any issue. I could imagine crazy things with this feature.
+Perhaps taking point 2 and 3 above, instead of a full hijack, we could also have the ability to modify the parameters. Not sure what usefulness that is besides rootkits and academia. But who knows?
+As for a link for documentation of what ftrace could do with this? Sorry, but I don't know of the url that points into my head ;)
+-------->
+Ah, ok. I guess the advantages weren't immediately obvious with the example you posted, in part because the __fentry__ version still had a stack frame, and the stack frame in both cases wasn't terribly exciting.
+With a beefier function and beefier stack frame, the differences would become more noticeable. And if you compile with -fomit-frame-pointer in the __fentry__ version, I can see the differences growing further still, as you note.
+In the atomic_add example, it wasn't obvious that mcount wouldn't let you do the things you say you might want to do with __fentry__. Your explanation makes the limitations of mcount clearer.
+Thanks!
+
+
+Ref:Function prologue
+http://en.wikipedia.org/wiki/Function_prologue

@@ -1,0 +1,57 @@
+在调用wake_up()唤醒目标进程后，会检查目标进程是否应该被调度运行（有可能抢占当前进程），
+典型的判断是这样完成的：
+__wake_up-->__wake_up_common-->default_wake_function-->try_to_wake_up-->ttwu_queue-->
+ttwu_do_activate-->ttwu_do_wakeup-->check_preempt_curr-->check_preempt_wakeup-->
+wakeup_preempt_entity/resched_task-->set_tsk_need_resched
+
+
+void __wake_up(wait_queue_head_t *q, unsigned int mode,
+ int nr_exclusive, void *key)
+{
+ unsigned long flags;
+
+ spin_lock_irqsave(&q->lock, flags);
+ __wake_up_common(q, mode, nr_exclusive, 0, key);
+ spin_unlock_irqrestore(&q->lock, flags);
+}
+EXPORT_SYMBOL(__wake_up);
+在__wake_up里spin_unlock_irqrestore()时有可能被抢占，wake_up_interruptible_sync()应该就是
+防止在这里被抢占的。ldd3 Chapter6:
+
+wake_up_interruptible_sync(wait_queue_head_t *queue);
+
+Normally, a process that is awakened may preempt the current process and be
+scheduled into the processor before wake_up returns. In other words, a call to
+wake_up may not be atomic. If the process calling wake_up is running in an
+atomic context (it holds a spinlock, for example, or is an interrupt handler), this
+rescheduling does not happen. Normally, that protection is adequate. If, how-
+ever, you need to explicitly ask to not be scheduled out of the processor at this
+time, you can use the “sync” variant of wake_up_interruptible. This function is
+most often used when the caller is about to reschedule anyway, and it is more
+efficient to simply finish what little work remains first.
+其实现：
+wake_up_interruptible_sync-->__wake_up_sync_key(set wake_flags = WF_SYNC)-->__wake_up_common-->
+default_wake_function-->try_to_wake_up-->select_task_rq(p, SD_BALANCE_WAKE, wake_flags);-->
+select_task_rq_fair(设置sync)-->wake_affine()，下面就和load balance有关，还没有研究
+
+__wake_up_sync_key 前面的注释：
+ * The sync wakeup differs that the waker knows that it will schedule
+ * away soon, so while the target thread will be woken up, it will not
+ * be migrated to another CPU - ie. the two threads are 'synchronized'
+ * with each other. This can prevent needless bouncing between CPUs.
+ *
+ * On UP it can prevent extra preemption.
+也就是说目标进程会被调度到当前cpu上，这应该是由上面的wake_affine实现的，
+On UP it can prevent extra preemption是如何实现的？
+
+网上的另外一点东西：
+http://comments.gmane.org/gmane.linux.drivers.ipw2100.devel/281
+How odd.
+
+ From the O'Reilly "Linux Device Drivers":
+
+Normally, a wake_up call can cause an immediate reschedule to happen, meaning 
+that other prcoesses might run before wake_up returns.  The "synchronous" 
+variants instead make any awakened processes runnable, but do not reschedule the 
+CPU.  This is used to avoid rescheduling when the current process is known to be 
+  going to sleep, thus forcing a reschedule anyway.

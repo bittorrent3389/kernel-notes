@@ -1,0 +1,12 @@
+Linux kernel分配内存函数分配到的内存所属的zone
+关于__GFP_DMA和__GFP_HIGHMEM的意义见ldd3 216页
+kmalloc:
+__get_from_pages:
+这两个都是从线性映射区分配虚拟内存
+如使用__GFP_DMA. 只从dma分配
+如不使用__GFP_DMA. 从dma或normal zone分配
+Kmalloc不能从high memory zone分配
+alloc_pages:
+当使用__GFP_HIGHMEM时可能从high memory zone里分配
+vmalloc
+因为使用了__GFP_HIGHMEM，所以其分配的内存来自三个区域都有可能

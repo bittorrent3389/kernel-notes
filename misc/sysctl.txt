@@ -1,0 +1,49 @@
+sysctl用来设置或改变内核参数，具体来说有两种使用情形：
+1. 设置某个内核参数的值，该参数被内核直接使用
+	比如/proc/sys/kernel/kstack_depth_to_print，对应的内核参数为kstack_depth_to_print，
+定义于arch/x86/kernel/dumpstack.c，该sysctl定义项为：
+	{
+	.procname    = "kstack_depth_to_print",
+	.data        = &kstack_depth_to_print,
+	.maxlen        = sizeof(int),
+	.mode        = 0644,
+	.proc_handler    = proc_dointvec,
+	},
+
+	此时直接使用proc_dointvec作为proc_handler，在对/proc/sys/kernel/kstack_depth_to_print
+进行读写时proc_dointvec会完成相应的操作，完成对用户缓冲区的读写。
+
+2. 作为一个控制文件，写入后内核完成一些操作
+	比如/proc/sys/kernel/stack_tracer_enabled，对其写入1或0后内核打开或关闭stack 
+tracer，此时要提供一个proc_handler，但是可以在其中通过proc_dointvec对data进行操作，然后再
+根据修改后的data的值进行内核操作，trace_stack.c中的stack_trace_sysctl可以作为一个模板：
+	int
+	stack_trace_sysctl(struct ctl_table *table, int write,
+			   void __user *buffer, size_t *lenp,
+			   loff_t *ppos)
+	{
+		int ret;
+
+		mutex_lock(&stack_sysctl_mutex);
+
+		ret = proc_dointvec(table, write, buffer, lenp, ppos);
+
+		if (ret || !write ||
+		    (last_stack_tracer_enabled == !!stack_tracer_enabled))
+			goto out;
+
+		last_stack_tracer_enabled = !!stack_tracer_enabled;
+
+		if (stack_tracer_enabled)
+			register_ftrace_function(&trace_ops);
+		else
+			unregister_ftrace_function(&trace_ops);
+
+	 out:
+		mutex_unlock(&stack_sysctl_mutex);
+		return ret;
+	}
+	stack_sysctl_mutex的作用时防止两个线程同时进行stack_trace_sysctl操作，
+stack tracer 里使用了一个 状态量stack_tracer_enabled，这里使用proc_dointvec对stack_tracer_enabled
+进行操作，proc_dointvec成功时返回0,所以如果ret不为0就直接返回。同时，如果是read操作（write为0）
+也直接返回，因为proc_dointvec已经将stack_tracer_enabled的值返回给了用户空间，无需进行其它操作了;如果是写操作，并且stack_tracer_enabled的值与上一次不同，则需要进行相应的操作。

@@ -1,0 +1,197 @@
+lock prefix的切换
+=================
+
+	为了使内核能在SMP模式和单内核模式（UP）之间切换，需要对
+一些代码动态进行修改调整。
+	在x86中，arch/x86/kernel/alternative.c，有一个struct smp_alt_module
+结构的队列smp_alt_modules。首先，内核是这个队列中的第一个元素，然后，如果
+一个模块中含有".smp_locks"段，在模块加载的后期也会在这个队列里添加一个此结构。
+
+	内核struct smp_alt_module结构的添加：
+
+start_kernel()			init/main.c
+     |
+check_bugs()			arch/x86/kernel/cpu/bugs.c
+     |
+alternative_instructions()	arch/x86/kernel/alternative.c
+     |
+alternatives_smp_module_add(NULL, "core kernel", __smp_locks,
+			 __smp_locks_end, _text, _etext);
+
+	模块struct smp_alt_module结构的添加：
+module_finalize()
+     |
+alternatives_smp_module_add()
+
+	结构struct smp_alt_module就是在函数alternatives_smp_module_add()
+里分配并加入队列smp_alt_modules的。函数alternatives_smp_module_add()中
+uniproc_patched就是用来表明是否要进行smp patch，即是否要对lock前辍进行patch
+（对模块来说，表示内核是否已经patch），如果不需要就直接退出，如果需要进行
+patch就分配并挂入struct smp_alt_module，并调用alternatives_smp_unlock()，这
+个函数的作用就是将lock前辍的代码0xf0修改为0x3e：
+
+static void alternatives_smp_unlock(const s32 *start, const s32 *end,
+				    u8 *text, u8 *text_end)
+{
+	const s32 *poff;
+
+	mutex_lock(&text_mutex);
+	for (poff = start; poff < end; poff++) {
+		u8 *ptr = (u8 *)poff + *poff;
+
+		if (!*poff || ptr < text || ptr >= text_end)
+			continue;
+		/* turn lock prefix into DS segment override prefix */
+		if (*ptr == 0xf0)
+			text_poke(ptr, ((unsigned char []){0x3E}), 1);
+	}
+	mutex_unlock(&text_mutex);
+}
+
+	这里从start到end为.smp_locks段在内存中的位置。根据.smp_lock段的实现，
+.smp_locks段中保存的内容为lock前辍到.smp_lock段中位置的偏移，所以根据
+u8 *ptr = (u8 *)poff + *poff;就可以算出lock前辍的地址。在验证其有效并处于
+代码段内后，通过text_poke进行修改代码。下面是LOCK_PREFIX的定义：
+
+/arch/x86/include/asm/alternative.h 
+#define LOCK_PREFIX_HERE \
+		".pushsection .smp_locks,\"a\"\n"	\
+		".balign 4\n"				\
+		".long 671f - .\n" /* offset */		\
+		".popsection\n"				\
+		"671:"
+
+#define LOCK_PREFIX LOCK_PREFIX_HERE "\n\tlock; "
+
+	同理，在打开smp时，会遍历smp_alt_modules并将lock前辍patch回来：
+alternatives_enable_smp()
+	|
+alternatives_smp_lock()
+	|
+text_poke()
+
+X86_FEATURE_UP
+==============
+	这个标志是在9a0b5817ad97bb718ab85322759d19a238712b47中引入的。一方面用来标记
+是否对SMP内核作了UP patch，另外的一个作用就是在$cat /proc/cpuinfo时打印"up"：
+
+	以前的内核中，模块调用alternatives_smp_module_add时是通过标志X86_FEATURE_UP来
+标记是否要做unlock patch:
+392         if (boot_cpu_has(X86_FEATURE_UP))
+393                 alternatives_smp_unlock(smp->locks, smp->locks_end,
+394                                         smp->text, smp->text_end);
+	而现在的内核是通过uniproc_patched来标记的，这是在
+commit 816afe4ff98ee10b1d30fd66361be132a0a5cee6里作出的修改。此外，
+X86_FEATURE_UP还有个作用就是在使用单内核时cat /proc/cpuinfo输出"up"标志:
+
+	arch/x86/kernel/cpu/capflags.c
+	[X86_FEATURE_UP]		 = "up",
+	arch/x86/kernel/cpu/proc.c
+	seq_printf(m, "flags\t\t:");
+	static int show_cpuinfo(struct seq_file *m, void *v)
+		for (i = 0; i < 32*NCAPINTS; i++)
+			if (cpu_has(c, i) && x86_cap_flags[i] != NULL)
+				seq_printf(m, " %s", x86_cap_flags[i]);
+
+	以前的内核在通过alternatives_smp_switch切换到UP时会设置X86_FEATURE_UP标志：
+455                 set_cpu_cap(&boot_cpu_data, X86_FEATURE_UP);
+456                 set_cpu_cap(&cpu_data(0), X86_FEATURE_UP);
+	而现在的内核在上面那个patch后就没有设置这个标志了，但是在enable smp时却
+还在清除这个标志，这应该是个疏忽。所以现在单内核的情况下ca/proc/cpuinfo也不会
+输出"up"了。
+	现在要设置这个标志，可以在alternative_instructions里调用
+alternatives_smp_module_add之前设置：
+
+	/* Patch to UP if other cpus not imminent. */
+	if (!noreplace_smp && (num_present_cpus() == 1 || setup_max_cpus <= 1)) {
+		uniproc_patched = true;
++		set_cpu_cap(&boot_cpu_data, X86_FEATURE_UP);
++		set_cpu_cap(&cpu_data(0), X86_FEATURE_UP);
+		alternatives_smp_module_add(NULL, "core kernel",
+					    __smp_locks, __smp_locks_end,
+					    _text, _etext);
+	}
+
+	因为当前内核中已经不使用这个标志作UP patch的标记，所以除非非常有必要输出
+"up"，否则这个标记已经没太大意义，这个patch的必要性可能也不大。
+
+smp_alternatives
+==================
+arch/x86/include/asm/alternative.h
+ * SMP alternatives use the same data structures as the other
+ * alternatives and the X86_FEATURE_UP flag to indicate the case of a
+ * UP system running a SMP kernel.  The existing apply_alternatives()
+ * works fine for patching a SMP kernel for UP.
+ *
+ * The SMP alternative tables can be kept after boot and contain both
+ * UP and SMP versions of the instructions to allow switching back to
+ * SMP at runtime, when hotplugging in a new CPU, which is especially
+ * useful in virtualized environments.
+ *
+ * The very common lock prefix is handled as special case in a
+ * separate table which is a pure address list without replacement ptr
+ * and size information.  That keeps the table sizes small.
+ */
+	上面这段注释有点让人费解，是因为这段注释是对应着以前的代码中的宏定义
+#define alternative_smp的，对应于commit 9a0b5817ad97bb718ab85322759d19a238712b47
+	当时这个patch在文件的include/asm-i386/alternative.h里不仅定义了宏alternative等，
+还定义了宏alternative_smp，这个宏的是针对"SMP alternative"的，那么什么是
+"SMP alternative"呢？在这个patch中可以看到这个宏的几处使用：__build_read_lock_ptr
+、__build_read_lock_const、__raw_spin_lock、__raw_spin_lock_flags等，如
+
+ static inline void __raw_spin_lock(raw_spinlock_t *lock)
+ {
+-       __asm__ __volatile__(
+-               __raw_spin_lock_string
+-               :"=m" (lock->slock) : : "memory");
++       alternative_smp(
++               __raw_spin_lock_string,
++               __raw_spin_lock_string_up,
++               "=m" (lock->slock) : : "memory");
+ }
+ 	其中__raw_spin_lock_string和__raw_spin_lock_string_up分别是在smp和up情况下
+使用的代码，这些情况都是比lock前辍更大块的代码替换：
+#define __raw_spin_lock_string \
+        "\n1:\t" \
+        "lock ; decb %0\n\t" \
+        "jns 3f\n" \
+        "2:\t" \
+        "rep;nop\n\t" \
+        "cmpb $0,%0\n\t" \
+        "jle 2b\n\t" \
+        "jmp 1b\n" \
+        "3:\n\t"
+#define __raw_spin_lock_string_up \
+        "\n\tdecb %0"
+
+	上面SMP alternatives use the same data structures as the other
+alternatives的含义是alternative_smp与alternative宏一样，在.smp_altinstructions
+段里保存了alt_instr结构数组，不同的是alternative_smp在其替换指令段
+.smp_altinstr_replacement里除了保存相应的替换指令外，还针对原指令的大小预留了
+一定的空间，这样就可以在alternative_instructions中alternatives_smp_switch之前
+通过alternatives_smp_save将原指令保存到.smp_altinstr_replacement里。
+（以前alternatives_smp_module_add是给模块作alternatives_smp_unlock用的，内核通过
+alternatives_smp_switch，现在都通过alternatives_smp_module_add）。
+	上面说SMP alternative tables可以保存起来可以在运行时切换回SMP是指内核
+可以通过alternatives_smp_switch调用来将SMP指令patch回来。
+	详见此commit 9a0b5817ad97bb718ab85322759d19a238712b47
+	但是后来因为一些原因alternative_smp宏被移去，只对lock前辍进行patch,而其它
+SMP alternatives均只按SMP情况处理，不作UP patch，见下面patch:
+	commit 8c74932779fc6f61b4c30145863a17125c1a296c
+
+	现在spin lock通过ticket lock来实现，也没有了SMP和UP的区别，
+见arch/x86/include/asm/spinlock.h
+
+lock prefix
+-----------
+根据arch/x86/include/asm/alternative.h中的注释：
+ * The very common lock prefix is handled as special case in a
+ * separate table which is a pure address list without replacement ptr
+ * and size information.  That keeps the table sizes small.
+lock前辍作为一个special case，并没有使用struct alt_instr结构，而是直接使用了
+表项到lock位置的偏移，见另一个文档的描述。
+
+Ref:
+====
+see commit 816afe4ff98ee10b1d30fd66361be132a0a5cee6
+http://lxr.oss.org.cn/source/arch/x86/kernel/alternative.c?v=3.4.9#L370

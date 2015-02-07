@@ -1,0 +1,53 @@
+LKD第四章Process Scheduling, Sleeping and waking up, Wait Queues中提到的情况：
+
+Some simple interfaces for sleeping used to be in wide use.These interfaces, however,
+have races: It is possible to go to sleep after the condition becomes true. In that case, the
+task might sleep indefinitely.
+这里指的是void sleep_on(wait_queue_head_t *queue);的情况就是在代码判断应该睡眠和sleep_on内部调用prepare_to_wait之间的window,见LDD3 P161：Ancient history: sleep_on。
+
+关于void wake_up(wait_queue_head_t *queue);接口的问题，就是如果从这些函数返回后如果不通过加锁再次进行条件测试的话，会有race问题，如LDD3 P150所描述。所以即使使用了这些接口，也要在其认为条件成立返回后再加锁测试，如LDD3 P153中scull_p_read的例子中那样（使用了down_interruptible(&dev->sem)）来测试条件。
+
+同理，LDD3 P271中short_i_read的实现也是有问题的，没有在schedule()返回后while测试条件之前加锁（信号量或mutex或spinlock）。
+
+正确的处理是schedule()被唤醒后再次判断条件前加锁，使得condition的判断和condition的修改在原子的情况下完成。
+
+-------------------------------------------------
+
+ldd3中scull_p_read()中的例子：
+static ssize_t scull_p_read (struct file *filp, char __user *buf, size_t count,
+                loff_t *f_pos)
+{
+    if (down_interruptible(&dev->sem))
+        return -ERESTARTSYS;
+
+     while (dev->rp == dev->wp) { /* nothing to read */
+          up(&dev->sem); /* release the lock */
+          if (filp->f_flags & O_NONBLOCK)
+                    return -EAGAIN;
+          PDEBUG("\"%s\" reading: going to sleep\n", current->comm);
+          if (wait_event_interruptible(dev->inq, (dev->rp != dev->wp)))
+                    return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+         /* otherwise loop, but first reacquire the lock */
+         if (down_interruptible(&dev->sem))
+                    return -ERESTARTSYS;
+}
+
+#define __wait_event_interruptible(wq, condition, ret) \
+do { \
+ DEFINE_WAIT(__wait); \
+ \
+ for (;;) { \
+ prepare_to_wait(&wq, &__wait, TASK_INTERRUPTIBLE); \
+ if (condition) \
+ break; \
+ if (!signal_pending(current)) { \
+ schedule(); \
+ continue; \
+ } \
+ ret = -ERESTARTSYS; \
+ break; \
+ } \
+ finish_wait(&wq, &__wait); \
+} while (0)
+
+这里有两点需要注意，一是prepare_to_wait之后要判断，二是schedule之后要加锁

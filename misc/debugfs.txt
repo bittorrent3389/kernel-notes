@@ -1,0 +1,137 @@
+大概看了一下debugfs，略做笔记：
+
+有关文档：
+Documentation/filesystems/debugfs.txt
+http://lwn.net/Articles/115405/
+http://www.cnblogs.com/wwang/archive/2011/01/17/1937609.html
+http://www.360doc.com/content/10/0628/11/36491_35709834.shtml
+
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+通过debugfs，可以以/sys/kernel/debug/下的文件的形式将需要debug的模块中的一些数据结构导出到用户空间，进而在用户空间读取或修改其内容，获取相应的debug信息。
+
+要使用debugfs， 需要#include<linux/debugfs.h>， 所实现的接口也声明于其中， 主要有
+struct dentry *debugfs_create_dir();
+struct dentry *debugfs_create_file();
+struct dentry *debugfs_create_uX();
+struct dentry *debugfs_create_blob();
+等等。
+
+debugfs的实现在fs/debugfs/inode.c和fs/debugfs/file.c
+fs/debugfs/inode.c：
+
+static int __init debugfs_init(void)
+{
+ debug_kobj = kobject_create_and_add("debug", kernel_kobj);
+ retval = register_filesystem(&debug_fs_type);
+}
+
+
+struct dentry *debugfs_create_dir(const char *name, struct dentry *parent)
+{
+ return debugfs_create_file(name, S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO, parent, NULL, NULL);
+}
+
+struct dentry *debugfs_create_u32(const char *name, mode_t mode,
+     struct dentry *parent, u32 *value)
+{
+ return debugfs_create_file(name, mode, parent, value, &fops_u32);
+}
+所以这里创建节点都是由debugfs_create_file实现的：
+struct dentry *debugfs_create_file(const char *name, mode_t mode,
+       struct dentry *parent, void *data,
+       const struct file_operations *fops)
+{
+ error = simple_pin_fs(&debug_fs_type,...);      //如果还没有kern_mount，kern_mount一下
+ error = debugfs_create_by_name(name, mode, parent, &dentry,
+           data, fops);
+}
+
+进而由 debugfs_create_by_name实现：
+static int debugfs_create_by_name(const char *name, mode_t mode,
+      struct dentry *parent,
+      struct dentry **dentry,
+      void *data,
+      const struct file_operations *fops)
+{
+ *dentry = lookup_one_len(name, parent, strlen(name)); 
+  //创建目标dentry结构，并和parent关联起来                                           
+  //lookup_one_len>__lookup_hash >d_alloc_and_lookup > inode->i_op->lookup为simple_lookup  
+  // 由debug_mount > mount_single > fill_super > simple_fill_super > inode->i_op             //= &simple_dir_inode_operations;设置
+ if (!IS_ERR(*dentry)) {
+  switch (mode & S_IFMT) {
+  case S_IFDIR:
+   error = debugfs_mkdir(parent->d_inode, *dentry, mode,
+           data, fops);
+   break;
+  case S_IFLNK:
+   error = debugfs_link(parent->d_inode, *dentry, mode,
+          data, fops);
+   break;
+  default:
+   error = debugfs_create(...);        
+                    fsnotify_create     
+   //创建inode结构并和dentry结构连接在一起，对于
+   //debugfs文件系统，只存在内存中的dentry和inode结构，并不存在磁盘上结点。
+   //这里在VFS层创建了文件，所以要用fsnotify_create通知用户空间中关心此父目录的线程
+  ... ...
+}
+
+struct dentry *debugfs_create_u32(const char *name, mode_t mode,
+     struct dentry *parent, u32 *value)
+{
+        ... ...
+ return debugfs_create_file(name, mode, parent, value, &fops_u32);  
+}
+这里设置文件的file_operations结构为fops_u32，而：
+DEFINE_SIMPLE_ATTRIBUTE(fops_u32, debugfs_u32_get, debugfs_u32_set, "%llu\n");
+
+#define DEFINE_SIMPLE_ATTRIBUTE(__fops, __get, __set, __fmt)  \
+static int __fops ## _open(struct inode *inode, struct file *file) \
+{         \
+ __simple_attr_check_format(__fmt, 0ull);   \
+ return simple_attr_open(inode, file, __get, __set, __fmt); \
+}         \
+static const struct file_operations __fops = {    \
+ .owner  = THIS_MODULE,      \
+ .open  = __fops ## _open,     \
+ .release = simple_attr_release,     \
+ .read  = simple_attr_read,     \
+ .write  = simple_attr_write,     \
+ .llseek  = generic_file_llseek,     \
+};
+
+int simple_attr_open(struct inode *inode, struct file *file,
+       int (*get)(void *, u64 *), int (*set)(void *, u64),
+       const char *fmt)
+{
+ struct simple_attr *attr;
+
+ attr = kmalloc(sizeof(*attr), GFP_KERNEL);
+
+ attr->data = inode->i_private;    
+       //inode->i_private里面包含要dump的数据结构的地址，由debugfs_create_file>...>debugfs_mknod>debugfs_get_inode设置进去
+
+ file->private_data = attr;
+
+}
+
+读数据时：
+ssize_t simple_attr_read(struct file *file, char __user *buf,
+    size_t len, loff_t *ppos)
+{
+  ret = attr->get(attr->data, &val);
+}
+由DEFINE_SIMPLE_ATTRIBUTE(fops_u32, debugfs_u32_get, debugfs_u32_set, "%llu\n");可知这里get为debugfs_u32_get，
+所以就把数据拷贝出去：
+static int debugfs_u32_get(void *data, u64 *val)
+{
+ *val = *(u32 *)data;
+ return 0;
+}
+
+这里只看到创建了inode和dentry结构，并没看到在/sys/kernel/debug/下面创建磁盘的结点，实际上，sys文件系统里的结点只存在于内存中，不存在磁盘上的对应物，并且
+lookup_one_len>__lookup_hash>d_alloc_and_lookup>d_alloc分配结点时已经把分配的dentry结构挂入父结点的dentry结构，所以
+通过sys_open>do_sys_open>do_filp_open>path_openat>link_path_walk>walk_component>do_lookup
+在缓存里可以找到，也就是说目录遍历或打开文件时可以找到相应的结点
+
+sysfs文件系统中kobject的目录和属性都有一个sysfs_dirent结构对应，这里添加的只是/sys/kernel/debug/下的“普通”文件，并不和sysfs中的某个kobject对应，所以并没有相应的sysfs_dirent结构。

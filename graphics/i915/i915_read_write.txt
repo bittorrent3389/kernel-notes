@@ -1,0 +1,71 @@
+I915_READ/I915_WRITE
+--------------------
+
+drivers/gpu/drm/i915/i915_drv.h:
+#define I915_READ(reg)		dev_priv->uncore.funcs.mmio_readl(dev_priv, (reg), true)
+#define I915_WRITE(reg, val)	dev_priv->uncore.funcs.mmio_writel(dev_priv, (reg), (val), true)
+
+而mmio_readl和mmio_writel在intel_uncore_init中通过
+ASSIGN_READ_MMIO_VFUNCS(gen6);与ASSIGN_WRITE_MMIO_VFUNCS(hsw)赋值：
+
+#define ASSIGN_WRITE_MMIO_VFUNCS(x) \
+do { \
+	dev_priv->uncore.funcs.mmio_writeb = x##_write8; \
+	dev_priv->uncore.funcs.mmio_writew = x##_write16; \
+	dev_priv->uncore.funcs.mmio_writel = x##_write32; \
+	dev_priv->uncore.funcs.mmio_writeq = x##_write64; \
+} while (0)
+
+#define ASSIGN_READ_MMIO_VFUNCS(x) \
+do { \
+	dev_priv->uncore.funcs.mmio_readb = x##_read8; \
+	dev_priv->uncore.funcs.mmio_readw = x##_read16; \
+	dev_priv->uncore.funcs.mmio_readl = x##_read32; \
+	dev_priv->uncore.funcs.mmio_readq = x##_read64; \
+} while (0)
+
+gen6_read32及hsw_write32通过同一文件中的宏
+#define __gen6_read(x) \
+static u##x \
+gen6_read##x(struct drm_i915_private *dev_priv, off_t reg, bool trace) { \
+	REG_READ_HEADER(x); \
+	hsw_unclaimed_reg_debug(dev_priv, reg, true, true); \
+	if (dev_priv->uncore.forcewake_count == 0 && \
+	    NEEDS_FORCE_WAKE((dev_priv), (reg))) { \
+		dev_priv->uncore.funcs.force_wake_get(dev_priv, \
+						      FORCEWAKE_ALL); \
+		val = __raw_i915_read##x(dev_priv, reg); \
+		dev_priv->uncore.funcs.force_wake_put(dev_priv, \
+						      FORCEWAKE_ALL); \
+	} else { \
+		val = __raw_i915_read##x(dev_priv, reg); \
+	} \
+	hsw_unclaimed_reg_debug(dev_priv, reg, true, false); \
+	REG_READ_FOOTER; \
+}
+与
+#define __hsw_write(x) \
+static void \
+hsw_write##x(struct drm_i915_private *dev_priv, off_t reg, u##x val, bool trace) { \
+	u32 __fifo_ret = 0; \
+	REG_WRITE_HEADER; \
+	if (NEEDS_FORCE_WAKE((dev_priv), (reg))) { \
+		__fifo_ret = __gen6_gt_wait_for_fifo(dev_priv); \
+	} \
+	hsw_unclaimed_reg_debug(dev_priv, reg, false, true); \
+	__raw_i915_write##x(dev_priv, reg, val); \
+	if (unlikely(__fifo_ret)) { \
+		gen6_gt_check_fifodbg(dev_priv); \
+	} \
+	hsw_unclaimed_reg_debug(dev_priv, reg, false, false); \
+	hsw_unclaimed_reg_detect(dev_priv); \
+	REG_WRITE_FOOTER; \
+}
+定义，所以可以看出实际的读写是通过__raw_i915_read32与__raw_i915_write32来完成的:
+#define __raw_i915_read32(dev_priv__, reg__) readl((dev_priv__)->regs + (reg__))
+#define __raw_i915_write32(dev_priv__, reg__, val__) writel(val__, (dev_priv__)->regs + (reg__))
+
+而dev_priv->regs是这一系列控制寄存器对应的pci bar的虚拟地址，在i915_driver_load
+中通过 
+dev_priv->regs = pci_iomap(dev->pdev, mmio_bar, mmio_size);
+初始化。

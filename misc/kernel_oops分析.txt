@@ -1,5 +1,8 @@
     如果一个模块创建了debugfs文件，但模块卸载前没有通过    void debugfs_remove 或
-debugfs_remove_recursive移除相应的文件，当再次访问模块里的数据时，就会报错，比如cat一个已删除的文件时，首先要先打开相应的文件，在finish_open-->do_dentry_open里要通过inode->i_fop访问模块里定义的file_operations结构里的内容。虽然模块已被卸载，相应的file_operations结构已经不存在，但inode->i_fop未被清空，仍然存在，但根据fops_get的定义：
+debugfs_remove_recursive移除相应的文件，当再次访问模块里的数据时，就会报错，比如cat
+一个已删除的文件时，首先要先打开相应的文件，在finish_open-->do_dentry_open里要通过inode->i_fop
+访问模块里定义的file_operations结构里的内容。虽然模块已被卸载，相应的file_operations结构已经不存在，
+但inode->i_fop未被清空，仍然存在，但根据fops_get的定义：
 
 #define fops_get(fops) \
  (((fops) && try_module_get((fops)->owner) ? (fops) : NULL))
@@ -10,7 +13,11 @@ debugfs_remove_recursive移除相应的文件，当再次访问模块里的数�
 [13015.981907] IP: [<c1154679>] do_dentry_open+0x79/0x250
 [13015.981907] *pde = 0eed5067 *pte = 00000000 
 [13015.981907] Oops: 0000 [#4] PREEMPT SMP 
-[13015.981907] Modules linked in: snd_intel8x0 snd_ac97_codec ac97_bus snd_pcm joydev snd_page_alloc snd_timer ppdev snd microcode psmouse evdev serio_raw pcspkr intel_agp mousedev intel_gtt e1000 i2c_piix4 agpgart soundcore parport_pc i2c_core parport ac button ext4 crc16 mbcache jbd2 hid_generic usbhid hid sr_mod cdrom sd_mod ata_generic pata_acpi atkbd libps2 ohci_pci ohci_hcd ata_piix ahci libahci libata usbcore usb_common scsi_mod i8042 serio [last unloaded: hello]
+[13015.981907] Modules linked in: snd_intel8x0 snd_ac97_codec ac97_bus snd_pcm joydev snd_page_alloc
+snd_timer ppdev snd microcode psmouse evdev serio_raw pcspkr intel_agp mousedev intel_gtt e1000 i2c_piix4
+agpgart soundcore parport_pc i2c_core parport ac button ext4 crc16 mbcache jbd2 hid_generic usbhid hid
+sr_mod cdrom sd_mod ata_generic pata_acpi atkbd libps2 ohci_pci ohci_hcd ata_piix ahci libahci libata usbcore
+usb_common scsi_mod i8042 serio [last unloaded: hello]
 [13015.981907] CPU: 0 PID: 27260 Comm: cat Tainted: G      D    O 3.13.0-ARCH #2
 [13015.981907] Hardware name: innotek GmbH VirtualBox/VirtualBox, BIOS VirtualBox 12/01/2006
 [13015.981907] task: cee15640 ti: cfa30000 task.ti: cfa30000
@@ -36,12 +43,16 @@ debugfs_remove_recursive移除相应的文件，当再次访问模块里的数�
 [13015.981907]  [<c1155d41>] do_sys_open+0x121/0x220
 [13015.981907]  [<c1155e62>] SyS_open+0x22/0x30
 [13015.981907]  [<c14557a3>] syscall_call+0x7/0xb
-[13015.981907] Code: 89 73 10 a8 02 0f 85 4f 01 00 00 8b 56 20 f6 c4 40 89 93 88 00 00 00 0f 85 b3 01 00 00 8b 86 c8 00 00 00 85 c0 0f 84 c7 00 00 00 <8b> 00 e8 d0 9e f5 ff 84 c0 0f 84 b8 00 00 00 8b 86 c8 00 00 00
+[13015.981907] Code: 89 73 10 a8 02 0f 85 4f 01 00 00 8b 56 20 f6 c4 40 89 93 88 00 00 00 0f 85 b3
+01 00 00 8b 86 c8 00 00 00 85 c0 0f 84 c7 00 00 00 <8b> 00 e8 d0 9e f5 ff 84 c0 0f 84 b8 00 00 00
+8b 86 c8 00 00 00
 [13015.981907] EIP: [<c1154679>] do_dentry_open+0x79/0x250 SS:ESP 0068:cfa31e08
 [13015.981907] CR2: 00000000d1287200
 [13015.981907] ---[ end trace 290d0036f343c60b ]---
 
-    因为是在函数do_dentry_open里出错，所以在栈上向上找call trace时会找到do_dentry_open的返回地址，即finish_open+0x2b/0x40处，或虚拟地址<c1154bcb>处，通过objdump -S vmlinux得到的反汇编代码得知，这个地址正是在finish_open中调用do_dentry_open的返回地址 ，即其下一条指令的地址：
+    因为是在函数do_dentry_open里出错，所以在栈上向上找call trace时会找到do_dentry_open的返回地址，
+即finish_open+0x2b/0x40处，或虚拟地址<c1154bcb>处，通过objdump -S vmlinux得到的反汇编代码得知，
+这个地址正是在finish_open中调用do_dentry_open的返回地址 ，即其下一条指令的地址：
 
 c1154600 <do_dentry_open>:
 c1154600: 55                    push   %ebp
@@ -244,7 +255,9 @@ c1154bd8: 90                    nop
 c1154bd9: 8d b4 26 00 00 00 00  lea    0x0(%esi,%eiz,1),%esi
 
 
-    这只是找到了栈上的调用关系，要找到出错的位置，还得通过 EIP，通过 oops信息可知 ，EIP is at do_dentry_open+0x79/0x250,并且EIP为<c1154679>,从上面反汇编 do_dentry_open的代码可知，出错的指令为mov    (%eax),%eax,正好是在对call   c10ae550 <try_module_get>,的调用之前。
+    这只是找到了栈上的调用关系，要找到出错的位置，还得通过 EIP，通过 oops信息可知 ，
+EIP is at do_dentry_open+0x79/0x250,并且EIP为<c1154679>,从上面反汇编 do_dentry_open的代码可知，
+出错的指令为mov    (%eax),%eax,正好是在对call   c10ae550 <try_module_get>,的调用之前。
     另外，在oops信息中，显示了栈上的内容：
 
 Stack:

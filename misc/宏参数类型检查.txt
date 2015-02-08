@@ -15,7 +15,8 @@ static inline int __check_is_bitmap(const unsigned long *bitmap)
  return 1;
 }
 
-这里__check_is_bitmap用来进行编译时类型检查，确保bitmap参数的类型为unsigned long。如果to_cpumask实现为一个函数就无需这样了，但实现一个宏的好处是可以用来做静态初始化。
+这里__check_is_bitmap用来进行编译时类型检查，确保bitmap参数的类型为unsigned long。如果
+to_cpumask实现为一个函数就无需这样了，但实现一个宏的好处是可以用来做静态初始化。
 
 Ref:
 http://nikanth.blogspot.jp/2009/04/type-checking-macros.html

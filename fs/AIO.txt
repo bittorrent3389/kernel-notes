@@ -3,7 +3,8 @@ http://hi.baidu.com/_kouu/item/2b3cfecd49c17d10515058d9
 
 http://lenky.info/archives/2013/01/09/2183
 
-因为存放aio结果(io_event结构)的内存是在用户空间，所以这里要在用户空间分配虚拟空间并分配内存页，这里用到的direct IO里用到的get_user_pages()，这些是io_setup分配struct kioctx结构时完成的：
+因为存放aio结果(io_event结构)的内存是在用户空间，所以这里要在用户空间分配虚拟空间并分配内存页，
+这里用到的direct IO里用到的get_user_pages()，这些是io_setup分配struct kioctx结构时完成的：
 
 io_setup-->ioctx_alloc-->aio_setup_ring
 
@@ -87,26 +88,32 @@ ctx->user_id = info->mmap_base即是此区间在用户空间的地址。
 
 =====================================================
 =====================================================
-        We cover asynchronous I/O in this chapter, because
+    We cover asynchronous I/O in this chapter, because
 its implementation almost always involves direct I/O operations as well (if you are
 buffering data in the kernel, you can usually implement asynchronous behavior with-
 out imposing the added complexity on user space).
-         AIO一定对应着direct-IO（原因如上，不通过内核缓冲就算direct-IO，包括下面的字符设备），也就是说要直接操作用户空间的缓存而不经过内核缓存。
-        对于字符设备，因为自己会实现aio_read，所以在自己的aio_read里要通过get_user_pages或
-get_user_pages_fast将用户空间的内存iocb->aio_buf映射到内核中，以给驱动在异步操作完成时通过中断函数将数据写回用户空间的aio->buf。
-        而对于块设备／文件来说，非direct-IO没有意义，direct-IO的情况下，
- .aio_read = generic_file_aio_read,
+    AIO一定对应着direct-IO（原因如上，不通过内核缓冲就算direct-IO，包括下面的字符设备），
+也就是说要直接操作用户空间的缓存而不经过内核缓存。
+    对于字符设备，因为自己会实现aio_read，所以在自己的aio_read里要通过get_user_pages或
+get_user_pages_fast将用户空间的内存iocb->aio_buf映射到内核中，以给驱动在异步操作完成时
+通过中断函数将数据写回用户空间的aio->buf。
+    而对于块设备／文件来说，非direct-IO没有意义，direct-IO的情况下，
+.aio_read = generic_file_aio_read,
 generic_file_aio_read-->mapping->a_ops->direct_IO()
-  .direct_IO = blkdev_direct_IO,
-blkdev_direct_IO-->__blockdev_direct_IO-->do_direct_IO()-->dio_get_page()-->dio_refill_pages()
--->get_user_pages_fast()
+.direct_IO = blkdev_direct_IO,
+blkdev_direct_IO-->__blockdev_direct_IO-->do_direct_IO()-->dio_get_page()
+-->dio_refill_pages()-->get_user_pages_fast()
 
 
 一个字符设备AIO的例子，在ldd3，scullp的AIO例子中，
 scullp_aio_read()-->scullp_defer_op()-->scullp_read/scullp_write
-直接将数据通过copy_to_user或copy_from_user拷贝到用户空间了，而没有将用户空间的缓存通过get_user_pages()映射到内核里。
+直接将数据通过copy_to_user或copy_from_user拷贝到用户空间了，而没有将用户空间的缓存通过
+get_user_pages()映射到内核里。
 
-在实际的异步中，因为可能不会马上就有数据，所以不能通过copy_to_user这种方法马上拷贝数据，同时，也不能通过暂时保存用户空间地址，待设备操作完成时来copy_to_user，因为是异步操作，所以等操作完成时当前进程可能是其它进程了，所以不能用这种方法。而要通过get_user_pages()把用户空间地址先映射到内核空间，等异步操作完成时再访问，这就是ldd3中说的：（P439）
+在实际的异步中，因为可能不会马上就有数据，所以不能通过copy_to_user这种方法马上拷贝数据，
+同时，也不能通过暂时保存用户空间地址，待设备操作完成时来copy_to_user，因为是异步操作，
+所以等操作完成时当前进程可能是其它进程了，所以不能用这种方法。而要通过get_user_pages()
+把用户空间地址先映射到内核空间，等异步操作完成时再访问，这就是ldd3中说的：（P439）
 “Remem-bering the operation information includes arranging access to the user-space buffer”
 
 注意，这里说的映射用户空间地址和前面aio_setup_ring里在用户空间分配区间不同，那里分配空间是为了保存

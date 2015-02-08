@@ -1,17 +1,29 @@
-        在计算重定位后的地址的过程中可能需要一个加数(addend)，比如R_386_32的S+A与一R_386_PC32的S+A-P，这里的A就是所需要的addend，这个数可能保存在要修改的位置上（Elf32_Rel的情况），也可能保存在重定位表项里（Elf32_Rela里的r_addend域）：
-         As specified previously, only Elf32_Rela and Elf64_Rela entries contain an explicit addend. Entries of type Elf32_Rel and Elf64_Rel store an implicit addend in the location to be modified. Depending on the processor architecture, one form or the other might be necessary or more convenient. Consequently, an implementation for a particular machine may use one form exclusively or either form depending on context.
-       A relocation section references two other sections: a symbol table and a section to modify. The section header's sh_link and sh_info members, described in ``Sections'' above, specify these relationships.
-        而是否使用了Rela可以通过sh.sh_type == SHT_RELA来判断。
+    在计算重定位后的地址的过程中可能需要一个加数(addend)，比如R_386_32的S+A与一R_386_PC32的S+A-P，
+这里的A就是所需要的addend，这个数可能保存在要修改的位置上（Elf32_Rel的情况），也可能保存在重定位
+表项里（Elf32_Rela里的r_addend域）：
+    As specified previously, only Elf32_Rela and Elf64_Rela entries contain an explicit addend.
+Entries of type Elf32_Rel and Elf64_Rel store an implicit addend in the location to be modified.
+Depending on the processor architecture, one form or the other might be necessary or more convenient.
+Consequently, an implementation for a particular machine may use one form exclusively or either form
+depending on context.
+    A relocation section references two other sections: a symbol table and a section to modify.
+The section header's sh_link and sh_info members, described in ``Sections'' above, specify these
+relationships.
+    而是否使用了Rela可以通过sh.sh_type == SHT_RELA来判断。
         
-        对于引用字符串的情况下，重定位项对应的是对重定位入口.rodata的引用，也就是说重定位入口符号为“.rodata”，此符号所在的段rela->sym->sec为.rodata，此段的sec->sh.sh_flags中有标志SHF_STRINGS。此时重定位项所对应的字符串（如"abc"）存放在段.rodata里，偏移为rela->addend
-（在x86 cpu上这个偏移实际上保存在要修正的位置）。连接时将addend与.rodata相加就可以得到相应字符串的虚拟地址（将保存字符串的段[不是字符串表]读入内存后，也可以通过addend来索引找到相应的字符串），见：
-         https://github.com/dynup/kpatch/blob/master/kpatch-build/create-diff-object.c#L256
-         rela->string = rela->sym->sec->data->d_buf + rela->addend;
+    对于引用字符串的情况下，重定位项对应的是对重定位入口.rodata的引用，也就是说重定位入口符号为“.rodata”，
+此符号所在的段rela->sym->sec为.rodata，此段的sec->sh.sh_flags中有标志SHF_STRINGS。此时重定位项所对应的
+字符串（如"abc"）存放在段.rodata里，偏移为rela->addend（在x86 cpu上这个偏移实际上保存在要修正的位置）。
+连接时将addend与.rodata相加就可以得到相应字符串的虚拟地址（将保存字符串的段[不是字符串表]读入内存后，
+也可以通过addend来索引找到相应的字符串），见：
+    https://github.com/dynup/kpatch/blob/master/kpatch-build/create-diff-object.c#L256
+    rela->string = rela->sym->sec->data->d_buf + rela->addend;
 
-        一个段里如果有SHF_STRINGS标志位则表示此段内保存字符串：
+    一个段里如果有SHF_STRINGS标志位则表示此段内保存字符串：
      
 SHF_STRINGS
-The data elements in the section consist of null-terminated character strings. The size of each character is specified in the section header's sh_entsize field.
+The data elements in the section consist of null-terminated character strings. The size of each character
+is specified in the section header's sh_entsize field.
 Ref:
 http://www.sco.com/developers/gabi/2003-12-17/ch4.reloc.html
 http://www.sco.com/developers/gabi/2003-12-17/ch4.sheader.html

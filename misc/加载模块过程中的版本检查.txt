@@ -25,4 +25,5 @@ load_module()-->layout_and_allocate()-->check_modinfo()
 
 sys_init_module()-->
 load_module()-->simplify_symbols()-->resolve_symbol_wait()-->resolve_symbol()-->check_version()
-检查模块所使用的内核中的符号版本（模块中__versions段里符号的crc值）是否与内核中的一致，也就是module.mod.c里数据结构static const struct modversion_info ____versions[]中的crc是否与内核中的一致。
+检查模块所使用的内核中的符号版本（模块中__versions段里符号的crc值）是否与内核中的一致，也就是
+module.mod.c里数据结构static const struct modversion_info ____versions[]中的crc是否与内核中的一致。

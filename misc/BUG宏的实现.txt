@@ -51,9 +51,13 @@ struct bug_entry {
     unsigned short    flags;
 };
 #endif    /* CONFIG_GENERIC_BUG */
-    从BUG()的定义来看，结构bug_entry的几个field分别被设置成了指令“ud2”的地址（标号1处）（这个和下一个源文件名在重定位后会保存重定位后的地址）、代码源文件文件名指针（__FILE__）、行号（__LINE__）、0（对应flags域）。
+    从BUG()的定义来看，结构bug_entry的几个field分别被设置成了指令“ud2”的地址（标号1处）
+（这个和下一个源文件名在重定位后会保存重定位后的地址）、代码源文件文件名指针（__FILE__）、
+行号（__LINE__）、0（对应flags域）。
 
-    由于"ud2"是一个非法指令，会引发cpu的invalid opcode exception，其处理函数为arch/x86/kernel/entry_32.S中的invalid_op，其会调用do_invalid_op，这是又是在文件arch/x86/kernel/traps.c中由宏定义
+    由于"ud2"是一个非法指令，会引发cpu的invalid opcode exception，其处理函数为
+arch/x86/kernel/entry_32.S中的invalid_op，其会调用do_invalid_op，这是又是在文件
+arch/x86/kernel/traps.c中由宏定义
 #define DO_ERROR_INFO根据
 DO_ERROR_INFO(X86_TRAP_UD,     SIGILL,  "invalid opcode", invalid_op,ILL_ILLOPN, regs->ip )
 来生成的，它主要调用do_trap函数：
@@ -110,7 +114,8 @@ const struct bug_entry *find_bug(unsigned long bugaddr)
 .long expressions与.int 相同：
     Expect zero or more expressions, of any section, separated by commas. For each expression,
 emit a number that, at run time, is the value of that expression.
-    也就是说在段内生成expression重定位后的值，对应BUG()的情况 ，就是生成重定位后标号1b的地址和重定位后文件名__FILE__字符串的地址（在.rodata段中）。
+    也就是说在段内生成expression重定位后的值，对应BUG()的情况 ，就是生成重定位后标号1b的地址和
+重定位后文件名__FILE__字符串的地址（在.rodata段中）。
 
 .word expressions
     This directive expects zero or more expressions, of any section, separated by commas.

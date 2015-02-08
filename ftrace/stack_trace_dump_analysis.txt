@@ -82,7 +82,8 @@ Call Trace:
 mcount(ftrace_caller)的返回地址，即__rcu_read_unlock+0x9/0x60，在check_stack里将其写入stack_dump_trace[0]，这样
 在stack_dump_trace里就得到了__rcu_read_unlock开始的完整的栈。
     对于使用fentry的情况， 因为在__rcu_read_unlock的一开始没设置好frame时就调用了ftrace_caller，所以__rcu_read_unlock
-的返回地址cpuacct_charge+0x4b/0x60也是不可信的因而也会被跳过，所以被写入到stack_dump_trace[1]处的是update_curr+0x13b/0x210，此时在stack_trace_call里ip被设置成了parent_ip，即cpuacct_charge+0x4b/0x60。所以最终stack_dump_trace里保存的是
+的返回地址cpuacct_charge+0x4b/0x60也是不可信的因而也会被跳过，所以被写入到stack_dump_trace[1]处的是update_curr+0x13b/0x210，
+此时在stack_trace_call里ip被设置成了parent_ip，即cpuacct_charge+0x4b/0x60。所以最终stack_dump_trace里保存的是
 cpuacct_charge+0x4b/0x60开始的栈。由于__rcu_read_unlock()一开始就调用了ftrace_caller，所以其使用的栈可以忽略不计，
 只有一个返回地址。
 

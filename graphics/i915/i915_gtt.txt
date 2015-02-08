@@ -12,7 +12,8 @@ i915_gem_obj_ggtt_pin
 		|_i915_gem_object_bind_to_vm
 			|_i915_gem_object_get_pages
 				|_ops->get_pages(obj);
-				  //通过shmem_read_mapping_page_gfp分配内存页，再组成scatterlist表（sg_table)，保存在obj->pages里。
+				  //通过shmem_read_mapping_page_gfp分配内存页，再组成scatterlist表（sg_table)，
+				  //保存在obj->pages里。
 				  i915_gem_object_get_pages_gtt
 					|_st = kmalloc(sizeof(*st), GFP_KERNEL);
 					|_sg_alloc_table

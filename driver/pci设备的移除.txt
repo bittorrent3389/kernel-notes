@@ -24,7 +24,8 @@ device_unregister()
 kobject_release()-->kobject_cleanup()
                                      |_ struct kobj_type *t = get_ktype(kobj);
                                      |_ t->release(kobj);
-这里通过put_device(dev)--> kobject_put(&dev->kobj);减小device(kobject)的引用计数，引用计数为0时会通过kobject_release()来调用相应kobj_type的release函数。
+这里通过put_device(dev)--> kobject_put(&dev->kobj);减小device(kobject)的引用计数，
+引用计数为0时会通过kobject_release()来调用相应kobj_type的release函数。
 
 对于struct device结构的kobject:
 void device_initialize(struct device *dev)

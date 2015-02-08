@@ -1,9 +1,11 @@
-通过inotify可以同时监视一些文件和一些目录下文件状态的变化，如被访问，被修改，在目录上创建文件等。介绍及其API的使用见man inotify，下面这三篇文章也可做为参考：
+通过inotify可以同时监视一些文件和一些目录下文件状态的变化，如被访问，被修改，在目录上创建文件等。
+介绍及其API的使用见man inotify，下面这三篇文章也可做为参考：
 http://www.ibm.com/developerworks/cn/linux/l-inotifynew/index.html
 http://www.linuxjournal.com/article/8478
 http://kernelnewbies.org/Linux_2_6_31#head-082d9a34a245a3a3211244078f276bf3348bf0d6
-＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
-下面简单分析一下inotify的实现和fsnotify的设计。inotify是基于fsnotify实现的一种通知策略，具体实现了用户接口即系统调用
+======================================================
+下面简单分析一下inotify的实现和fsnotify的设计。inotify是基于fsnotify实现的一种通知策略，
+具体实现了用户接口即系统调用:
 sys_inotify_init
 sys_inotify_init1
 sys_inotify_add_watch
@@ -25,9 +27,12 @@ include/linux/fsnotify_backend.h实现。
 
 而fs/notify/dnotify/, fs/notify/fanotify/ 和fs/notify/inotify/则分别实现了dnotify, fanotify, inotify。
 
-具体的过程大致就是监视线程通过一种具体的策略，对某些文件或目录进行监视。当另一进程或线程做文件操作时，就会有查看是否有人在对此文件监视，若此时的操作和别人所要监视的操作相符时，就要唤醒监视线程，并按相应策略进行处理。
+具体的过程大致就是监视线程通过一种具体的策略，对某些文件或目录进行监视。当另一进程或线程做文件操作时，
+就会有查看是否有人在对此文件监视，若此时的操作和别人所要监视的操作相符时，就要唤醒监视线程，
+并按相应策略进行处理。
 
-这样，做为backend的fsnotify就要有两个interface： 一个是提供给vfs层的interface，当有文件操作时调用。第二个就是提供给上层具体通知策略的实现者来调用的接口。这些接口都定义在include/linux/fsnotify_backend.h：
+这样，做为backend的fsnotify就要有两个interface： 一个是提供给vfs层的interface，当有文件操作时调用。
+第二个就是提供给上层具体通知策略的实现者来调用的接口。这些接口都定义在include/linux/fsnotify_backend.h：
 fsnotify_backend.h
 ... ...
 //提供的宏定义
@@ -49,7 +54,8 @@ extern void fsnotify_get_event(struct fsnotify_event *event);
 ... ...
 #else
 #endif /* CONFIG_FSNOTIFY */
-这些函数接口有两部分，第一部分就是提供给vfs层的接口，为了方便使用，include/linux/fsnotify.h对其进行了一些封装；第二部分就是暴露给具体通知策略实现者的接口。
+这些函数接口有两部分，第一部分就是提供给vfs层的接口，为了方便使用，include/linux/fsnotify.h对其进行了一些封装；
+第二部分就是暴露给具体通知策略实现者的接口。
 
 先看inotify系统调用的实现，在fs/notify/inotify/inotify_user.c里。
 sys_inotify_init（sys_inotify_init1）：
@@ -71,8 +77,10 @@ static struct fsnotify_group *inotify_new_group(unsigned int max_events)
  group->inotify_data.fa = NULL;
  group->inotify_data.user = get_current_user();
 }
-这里主要就是分配并初始化一个fsnotify_group结构。一个线程可以通过sys_inotify_add_watch同时对多个文件或目录进行监视，这些监视共同形成了一个group。同时一个文件也可以同时被多个线程监视，也就是被多个group监视。
-创建了一个group后，通过anon_inode_getfd分配了一个对应于此inotify的打开文件号fd和file结构，并和匿名inode联系起来，并把此group结构保存在此file结构的private_data里。
+这里主要就是分配并初始化一个fsnotify_group结构。一个线程可以通过sys_inotify_add_watch同时对多个文件或目录
+进行监视，这些监视共同形成了一个group。同时一个文件也可以同时被多个线程监视，也就是被多个group监视。
+创建了一个group后，通过anon_inode_getfd分配了一个对应于此inotify的打开文件号fd和file结构，并和匿名inode
+联系起来，并把此group结构保存在此file结构的private_data里。
 
 sys_inotify_add_watch：
 SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,
@@ -103,9 +111,12 @@ static int inotify_update_watch(struct fsnotify_group *group, struct inode *inod
  if (ret == -ENOENT)
   ret = inotify_new_watch(group, inode, arg);
 }
-首先通过fget_light取得fd对应的file结构，并确定这个fd确实对应一个inotify的instance。然后通过inotify_find_inode，进而通过user_path_at找到监视的目标pathname对应的inode。
-最后通过inotify_update_watch，把对于目标（inode）的某种监视（mask），即一个watch(其实是mark结构)加入到fd对应的group中去。
-先通过inotify_update_existing_watch，如在group中目标watch已存在，则对其进行更新。否则就通过inotify_new_watch添加一个新的watch(mark):
+首先通过fget_light取得fd对应的file结构，并确定这个fd确实对应一个inotify的instance。然后通过
+inotify_find_inode，进而通过user_path_at找到监视的目标pathname对应的inode。
+最后通过inotify_update_watch，把对于目标（inode）的某种监视（mask），即一个watch(其实是mark结构)
+加入到fd对应的group中去。
+先通过inotify_update_existing_watch，如在group中目标watch已存在，则对其进行更新。否则就通过
+inotify_new_watch添加一个新的watch(mark):
 static int inotify_new_watch(struct fsnotify_group *group,
         struct inode *inode,
         u32 arg)
@@ -120,12 +131,17 @@ static int inotify_new_watch(struct fsnotify_group *group,
  ret = fsnotify_add_mark(&tmp_i_mark->fsn_mark, group, inode, NULL, 0);
         ... ...
 }
-先分配一个inotify_inode_mark 结构，inotify_inode_mark 结构只是对fsnotify_mark结构的包装，外加一个对应当前watch的wd，类似的结构还有inotify_event_private_data。后面的操作都是调用fsnotify的函数通过里面的fsnotify_mark结构fsn_mark来完成，所以这里就是继承思想的体现：
+先分配一个inotify_inode_mark 结构，inotify_inode_mark 结构只是对fsnotify_mark结构的包装，
+外加一个对应当前watch的wd，类似的结构还有inotify_event_private_data。后面的操作都是调用
+fsnotify的函数通过里面的fsnotify_mark结构fsn_mark来完成，所以这里就是继承思想的体现：
 struct inotify_inode_mark {
  struct fsnotify_mark fsn_mark;
  int wd;
 };
-接着，通过inotify_add_to_idr将此mark结构加入到group的idr里。然后通过fsnotify_add_mark>fsnotify_add_inode_mark把这个mark加到inode结构的i_fsnotify_marks队列里，并设置指针指向相应inode，通过fsnotify_recalc_inode_mask_locked重新计算inode的mask标志i_fsnotify_mask：
+接着，通过inotify_add_to_idr将此mark结构加入到group的idr里。然后通过
+fsnotify_add_mark>fsnotify_add_inode_mark把这个mark加到inode结构的i_fsnotify_marks队列里，
+并设置指针指向相应inode，通过fsnotify_recalc_inode_mask_locked重新计算inode的mask标志
+i_fsnotify_mask：
 int fsnotify_add_inode_mark(struct fsnotify_mark *mark,
        struct fsnotify_group *group, struct inode *inode,
        int allow_dups)
@@ -207,8 +223,11 @@ static ssize_t inotify_read(struct file *file, char __user *buf,
   ret = buf - start;
  return ret;
 }
-这里的while循环里，如果没有想要的数据可读，即group的notification_list为空，并且read没有设置为NONBLOCK，则当前线程会通过调用schedule();在队列group->notification_waitq上睡眠，体现为用户空间read调用的阻塞。
-这时如果有数据到来会将其从队列中唤醒，并通过get_one_event从notification_list队列头取下一个fsnotify_event_holder， 找到对应的fsnotify_event处理：
+这里的while循环里，如果没有想要的数据可读，即group的notification_list为空，并且read没有设置
+为NONBLOCK，则当前线程会通过调用schedule();在队列group->notification_waitq上睡眠，
+体现为用户空间read调用的阻塞。
+这时如果有数据到来会将其从队列中唤醒，并通过get_one_event从notification_list队列头取下
+一个fsnotify_event_holder， 找到对应的fsnotify_event处理：
 static struct fsnotify_event *get_one_event(struct fsnotify_group *group,
          size_t count)
 {
@@ -234,8 +253,11 @@ static struct fsnotify_event *get_one_event(struct fsnotify_group *group,
 
  return event;
 }
-最后通过copy_event_to_user从fsnotify_event中找到属于本group的inotify_event_private_data结构并copy_to_user到用户空间。
-由于一个fsnotify_event可能适用于不同的group,所以notification_list中挂的是fsnotify_event_holder结构并用其中指针指向该fsnotify_event结构，这时不同group的inotify_event_private_data就挂在fsnotify_event的private_data_list队列中。
+最后通过copy_event_to_user从fsnotify_event中找到属于本group的inotify_event_private_data
+结构并copy_to_user到用户空间。
+由于一个fsnotify_event可能适用于不同的group,所以notification_list中挂的是
+fsnotify_event_holder结构并用其中指针指向该fsnotify_event结构，这时不同group
+的inotify_event_private_data就挂在fsnotify_event的private_data_list队列中。
 
 再看操作文件的一方如何进行通知：
 fsnotify提供给vfs层的接口是在include/linux/fsnotify.h中，主要有：
@@ -244,7 +266,8 @@ fsnotify_link
 fsnotify_mkdir
 fsnotify_access
 fsnotify_modify
-等等，以fsnotify_create为例：在vfs层vfs_create调用dir->i_op->create(dir, dentry, mode, nd)后就调用了fsnotify_create。还有debugfs中debugfs_create创建了结点后也调用fsnotify_create。
+等等，以fsnotify_create为例：在vfs层vfs_create调用dir->i_op->create(dir, dentry, mode, nd)
+后就调用了fsnotify_create。还有debugfs中debugfs_create创建了结点后也调用fsnotify_create。
 
 fsnotify_create调用fsnotify完成操作：
 fsnotify(inode, FS_CREATE, dentry->d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
@@ -308,12 +331,71 @@ int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
         ... ...
 }
 这里就是通过while循环遍历i_fsnotify_marks，并对队列中的每个mark调用send_to_group：
-static int send_to_group(struct inode *to_tell, struct vfsmount *mnt,     struct fsnotify_mark *inode_mark,     struct fsnotify_mark *vfsmount_mark,     __u32 mask, void *data,     int data_is, u32 cookie,     const unsigned char *file_name,     struct fsnotify_event **event) {  /* does the inode mark tell us to do something? */  if (inode_mark) {   group = inode_mark->group;   inode_test_mask = (mask & ~FS_EVENT_ON_CHILD);   inode_test_mask &= inode_mark->mask;   inode_test_mask &= ~inode_mark->ignored_mask;  }   if (!inode_test_mask && !vfsmount_test_mask)   return 0;   if (!*event) {   *event = fsnotify_create_event(to_tell, mask, data,       data_is, file_name,       cookie, GFP_KERNEL);   if (!*event)    return -ENOMEM;  }  return group->ops->handle_event(group, inode_mark, vfsmount_mark, *event); } 
+
+static int send_to_group(struct inode *to_tell,
+			 struct fsnotify_mark *inode_mark,
+			 struct fsnotify_mark *vfsmount_mark,
+			 __u32 mask, void *data,
+			 int data_is, u32 cookie,
+			 const unsigned char *file_name)
+{
+	struct fsnotify_group *group = NULL;
+	__u32 inode_test_mask = 0;
+	__u32 vfsmount_test_mask = 0;
+
+	if (unlikely(!inode_mark && !vfsmount_mark)) {
+		BUG();
+		return 0;
+	}
+
+	/* clear ignored on inode modification */
+	if (mask & FS_MODIFY) {
+		if (inode_mark &&
+		    !(inode_mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY))
+			inode_mark->ignored_mask = 0;
+		if (vfsmount_mark &&
+		    !(vfsmount_mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY))
+			vfsmount_mark->ignored_mask = 0;
+	}
+
+	/* does the inode mark tell us to do something? */
+	if (inode_mark) {
+		group = inode_mark->group;
+		inode_test_mask = (mask & ~FS_EVENT_ON_CHILD);
+		inode_test_mask &= inode_mark->mask;
+		inode_test_mask &= ~inode_mark->ignored_mask;
+	}
+
+	/* does the vfsmount_mark tell us to do something? */
+	if (vfsmount_mark) {
+		vfsmount_test_mask = (mask & ~FS_EVENT_ON_CHILD);
+		group = vfsmount_mark->group;
+		vfsmount_test_mask &= vfsmount_mark->mask;
+		vfsmount_test_mask &= ~vfsmount_mark->ignored_mask;
+		if (inode_mark)
+			vfsmount_test_mask &= ~inode_mark->ignored_mask;
+	}
+
+	pr_debug("%s: group=%p to_tell=%p mask=%x inode_mark=%p"
+		 " inode_test_mask=%x vfsmount_mark=%p vfsmount_test_mask=%x"
+		 " data=%p data_is=%d cookie=%d\n",
+		 __func__, group, to_tell, mask, inode_mark,
+		 inode_test_mask, vfsmount_mark, vfsmount_test_mask, data,
+		 data_is, cookie);
+
+	if (!inode_test_mask && !vfsmount_test_mask)
+		return 0;
+
+	return group->ops->handle_event(group, to_tell, inode_mark,
+					vfsmount_mark, mask, data, data_is,
+					file_name, cookie);
+}
+
 这里就是通过比对，确定发生的事件mask是否是当前inode_mark所关心的：
 inode_test_mask &= inode_mark->mask;
 如果不是当前inode_mark所关心的，则return回去试验下一个mark。
-如果条件符合，先创建一个fsnotify_even，再用其调用相应group的handle_event函数，对于inotify，则是
-inotify_handle_event:
+如果条件符合，先创建一个fsnotify_even，再用其调用相应group的handle_event函数，对于inotify，
+则是inotify_handle_event:
 static int inotify_handle_event(struct fsnotify_group *group,
     struct fsnotify_mark *inode_mark,
     struct fsnotify_mark *vfsmount_mark,
@@ -352,12 +434,14 @@ struct fsnotify_event *fsnotify_add_notify_event()
 }
 
 
-这里就是分配inotify_event_private_data，并在fsnotify_add_notify_event里将其加入event的private_data_list队列。还有就是把event加入group的notification_list。
+这里就是分配inotify_event_private_data，并在fsnotify_add_notify_event里将其加入
+event的private_data_list队列。还有就是把event加入group的notification_list。
 之后就可以唤醒在read中睡眠在group->notification_waitq里的线程了。
 
 
 mark的管理：
-fsnotify对于mark的管理实现在fs/notify/mark.c中，里面包括添加mark，销毁mark等。值得注意的是里面对mark的销毁是通过一个内核线程来完成的：
+fsnotify对于mark的管理实现在fs/notify/mark.c中，里面包括添加mark，销毁mark等。
+值得注意的是里面对mark的销毁是通过一个内核线程来完成的：
 static int __init fsnotify_mark_init(void)
 {
  struct task_struct *thread;
@@ -398,4 +482,5 @@ void fsnotify_destroy_mark(struct fsnotify_mark *mark)
  spin_unlock(&destroy_lock);
  wake_up(&destroy_waitq);
 }
-外界释放mark的接口是fsnotify_destroy_mark，这里会将其加入本文件中定义的destroy_list，然后内核线程fsnotify_mark_destroy被唤醒后会将其删除。
+外界释放mark的接口是fsnotify_destroy_mark，这里会将其加入本文件中定义的destroy_list，
+然后内核线程fsnotify_mark_destroy被唤醒后会将其删除。

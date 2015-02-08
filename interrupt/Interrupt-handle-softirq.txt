@@ -30,7 +30,8 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
  set_irq_regs(old_regs);
  return 1;
 }
-其中handle_irq会调用具体的中断处理函数处理此中断，中断处理结束后，会调用定义在kernel/softirq.c里的irq_exit()，这里会检查是否有softirq等待执行：
- if (!in_interrupt() && local_softirq_pending())
- invoke_softirq();
+其中handle_irq会调用具体的中断处理函数处理此中断，中断处理结束后，会调用定义在kernel/softirq.c里的irq_exit()，
+这里会检查是否有softirq等待执行：
+     if (!in_interrupt() && local_softirq_pending())
+ 	    invoke_softirq();
 如果有，则调用invoke_softirq()，要么直接调用do_softirq()，要么唤醒ksoftirqd处理softirq。

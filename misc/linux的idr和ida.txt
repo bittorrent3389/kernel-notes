@@ -1,13 +1,16 @@
 有关idr的使用见
 http://lwn.net/Articles/103209/ 或
 http://blog.chinaunix.net/uid-24774106-id-367804.html
-＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+=============================================
 
 idr是一个“Small id to pointer translation service.”， 就是为数据结构分配一个id，建立这种映射。
 在磁盘文件的块映射中，为了兼顾访问速度和容量，把inode中的i_data数组分成直接映射，一次间址，二次间址和三次间址。
-而在idr中 , 则并没有这样的划分。而是根据要分配的id大小（要管理的数据结构的数量），动态伸展树的层次，动态分配分支结点idr_layer，动态建立起这棵树，而要管理的数据结构永远作为叶子节点。
+而在idr中 , 则并没有这样的划分。而是根据要分配的id大小（要管理的数据结构的数量），动态伸展树的层次，
+动态分配分支结点idr_layer，动态建立起这棵树，而要管理的数据结构永远作为叶子节点。
 
-除根节点外，每个分支节点都在上层分支节点的struct idr_layer __rcu *ary[1<<IDR_BITS];数组中。而要管理的数据结构指针则在转型为(struct idr_layer *)后，保存在最底层分支节点的ary数组里。而在idr_find中，则根据uid，一层一层的从ary数组中找到对应的指针，并转为void *返回。
+除根节点外，每个分支节点都在上层分支节点的struct idr_layer __rcu *ary[1<<IDR_BITS];数组中。
+而要管理的数据结构指针则在转型为(struct idr_layer *)后，保存在最底层分支节点的ary数组里。
+而在idr_find中，则根据uid，一层一层的从ary数组中找到对应的指针，并转为void *返回。
 
 相关数据结构：
 struct idr_layer {
@@ -39,9 +42,12 @@ struct idr {
 /* Leave the possibility of an incomplete final layer */
 #define MAX_LEVEL (MAX_ID_SHIFT + IDR_BITS - 1) / IDR_BITS
 
-可见数组struct idr_layer __rcu *ary[1<<IDR_BITS];的大小为32，也就是说这棵树完全展开时是个32叉树，高度可达MAX_LEVEL即7层。
+可见数组struct idr_layer __rcu *ary[1<<IDR_BITS];的大小为32，也就是说这棵树完全展开时是个32叉树，
+高度可达MAX_LEVEL即7层。
 
-当要管理的数据结构小于32个时idr结构top指向的根结点idr_layer中的arr数组中元素分别指向相应数据结构。当数据结构个数或所要求id大于32个时，这棵树就要生长一个层次，并分配相应id对应的分支结点idr_layer结构了，并且以后的数据结构都使用这一层次进行管理。
+当要管理的数据结构小于32个时idr结构top指向的根结点idr_layer中的arr数组中元素分别指向相应数据结构。
+当数据结构个数或所要求id大于32个时，这棵树就要生长一个层次，并分配相应id对应的分支结点idr_layer结构了，
+并且以后的数据结构都使用这一层次进行管理。
 
 IDR提供的相应接口和数据结构在头文件include/linux/idr.h中:
 ... ...
@@ -192,14 +198,19 @@ static int sub_alloc(struct idr *idp, int *starting_id, struct idr_layer **pa)
 
 linux的idr和ida - jesse.w - ydfjgsdighwdhjtyiju
 针对1－2层的情况，这里有几种情况（多层原理相同）：
-假设这棵树中原来有一层（idp->layers＝1），且请求的id(starting_id)小于32，并且原来的对象少于32个，那么不需要这里的while循环分配1号节点，直接通过sub_alloc找到空闲的位置。
-假设这棵树中原来有一层（idp->layers＝1），且请求的id(starting_id)小于32，但原来的对象等于32个，即当前idr_layer结构已满，这时虽不会通过while分配idr_layer结构，但到了sub_alloc里后会满足条件m == IDR_SIZE而返回IDR_NEED_TO_GROW，根据调整后的starting_id重新build_up而分配1号节点。
+假设这棵树中原来有一层（idp->layers＝1），且请求的id(starting_id)小于32，并且原来的对象少于32个，
+那么不需要这里的while循环分配1号节点，直接通过sub_alloc找到空闲的位置。
+假设这棵树中原来有一层（idp->layers＝1），且请求的id(starting_id)小于32，但原来的对象等于32个，
+即当前idr_layer结构已满，这时虽不会通过while分配idr_layer结构，但到了sub_alloc里后会满足条件
+m == IDR_SIZE而返回IDR_NEED_TO_GROW，根据调整后的starting_id重新build_up而分配1号节点。
 
-假设这棵树原来有一层，但请求的id大于或等于32，这里要通过while分配1号结构。然后到sub_alloc里后会分配2号结构并返回相应的空闲位置。
+假设这棵树原来有一层，但请求的id大于或等于32，这里要通过while分配1号结构。
+然后到sub_alloc里后会分配2号结构并返回相应的空闲位置。
 
 原来就有两层，请求id大于或等于32且小于1024，根据需要使用已有的或分配2号结构。
 原来就有两层，请求id小于32,且第一个idr_layer结构的32个位置已满，这时在sub_alloc里n=0，m=1，m!=n会对id做出调整。
-原来就有两层，请求id小于32，第一个idr_layer结构不满，但空闲位置小于请求id，这时m == IDR_SIZE而通过id = (id | ((1 << (IDR_BITS * l)) - 1)) + 1;对id做出调整后continue或restart。
+原来就有两层，请求id小于32，第一个idr_layer结构不满，但空闲位置小于请求id，这时
+m == IDR_SIZE而通过id = (id | ((1 << (IDR_BITS * l)) - 1)) + 1;对id做出调整后continue或restart。
 
 总之，从idr_get_empty_slot返回后，pa[0]中包含的是数据结构ptr要插入的idr_layer结构，pa[1],pa[2] ... ..
 依次为其上层的idr_layer数据结构。
@@ -229,10 +240,49 @@ EXPORT_SYMBOL(idr_find);
 
 idr_get_next
 //得到id大于等于*nextidp的对象
+void *idr_get_next(struct idr *idp, int *nextidp)
+{
+	struct idr_layer *p, *pa[MAX_IDR_LEVEL + 1];
+	struct idr_layer **paa = &pa[0];
+	int id = *nextidp;
+	int n, max;
 
-void *idr_get_next(struct idr *idp, int *nextidp) {  /* find first ent */  n = idp->layers * IDR_BITS;  max = 1 << n;  p = rcu_dereference_raw(idp->top);  if (!p)   return NULL;   while (id < max) {   while (n > 0 && p) {    n -= IDR_BITS;    *paa++ = p;    p = rcu_dereference_raw(p->ary[(id >> n) & IDR_MASK]);   }                 //循环结束，p不为NULL，说明找到了id对应的对象   if (p) {    *nextidp = id;    return p;   }                 //循环结束，p为NULL，说明在n所在的层次出现了断层，id增加1<<n。   id += 1 << n;   while (n < fls(id)) {
-                        //如果id比较大，增加n的幅度。    n += IDR_BITS;
-                        //从上一个层次查找    p = *--paa;   }  }  return NULL; } EXPORT_SYMBOL(idr_get_next);
+	/* find first ent */
+	p = *paa = rcu_dereference_raw(idp->top);
+	if (!p)
+		return NULL;
+	n = (p->layer + 1) * IDR_BITS;
+	max = idr_max(p->layer + 1);
+
+	while (id >= 0 && id <= max) {
+		p = *paa;
+		while (n > 0 && p) {
+			n -= IDR_BITS;
+			p = rcu_dereference_raw(p->ary[(id >> n) & IDR_MASK]);
+			*++paa = p;
+		}
+
+		if (p) {
+			*nextidp = id;
+			return p;
+		}
+
+		/*
+		 * Proceed to the next layer at the current level.  Unlike
+		 * idr_for_each(), @id isn't guaranteed to be aligned to
+		 * layer boundary at this point and adding 1 << n may
+		 * incorrectly skip IDs.  Make sure we jump to the
+		 * beginning of the next layer using round_up().
+		 */
+		id = round_up(id + 1, 1 << n);
+		while (n < fls(id)) {
+			n += IDR_BITS;
+			--paa;
+		}
+	}
+	return NULL;
+}
+EXPORT_SYMBOL(idr_get_next);
 
 idr_remove
 void idr_remove(struct idr *idp, int id)
@@ -353,7 +403,9 @@ void ida_simple_remove(struct ida *ida, unsigned int id);
 
 void __init idr_init_cache(void);
 
-ida基于idr实现，其idr的底层idr_layer结构（slot）中保存的是ida_bitmap结构，ida_bitmap是IDA_BITMAP_LONGS个long组成的位图，每个位图表示IDA_BITMAP_BITS个位。nr_busy表示这个位图里使用了多少位。free_bitmap是在ida_pre_get分配的，供后面需要分配idr slot时使用。
+ida基于idr实现，其idr的底层idr_layer结构（slot）中保存的是ida_bitmap结构，ida_bitmap是
+IDA_BITMAP_LONGS个long组成的位图，每个位图表示IDA_BITMAP_BITS个位。nr_busy表示这个位图
+里使用了多少位。free_bitmap是在ida_pre_get分配的，供后面需要分配idr slot时使用。
 这样，ida的id的计算就要看在哪个idr slot上和在当前slot的位图中的偏移：
 id = idr_id * IDA_BITMAP_BITS + t;
 

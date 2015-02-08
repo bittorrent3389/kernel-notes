@@ -1,6 +1,8 @@
 如果同时要加局部锁和全局锁时，先加局部锁：
 ldd3 122页：
-A couple of rules of thumb can help. If you must obtain a lock that is local to your code (a device lock, say) along with a lock belonging to a more central part of the kernel, take your lock first.
+A couple of rules of thumb can help. If you must obtain a lock that is local to your code
+(a device lock, say) along with a lock belonging to a more central part of the kernel,
+take your lock first.
 
 为什么要先加局部锁呢？
 如果先加全局锁，后加局部锁，这时有可能全局锁通过了，局部锁却不能通过，如下面：
@@ -16,6 +18,7 @@ lock(local);
 unlock(local);
 unlock(global);
 
-这时如果线程A先获得了local锁，线程B就会被block在lock(local)处。这时因为线程B一直持有global锁，对系统的影响更大。
+这时如果线程A先获得了local锁，线程B就会被block在lock(local)处。这时因为线程B一直持有
+global锁，对系统的影响更大。
 
 所以要先加局部锁，后加全局锁，这样在类似的情景中对系统的影响只是局部的。

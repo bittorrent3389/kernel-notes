@@ -46,4 +46,5 @@ tracer，此时要提供一个proc_handler，但是可以在其中通过proc_doi
 	stack_sysctl_mutex的作用时防止两个线程同时进行stack_trace_sysctl操作，
 stack tracer 里使用了一个 状态量stack_tracer_enabled，这里使用proc_dointvec对stack_tracer_enabled
 进行操作，proc_dointvec成功时返回0,所以如果ret不为0就直接返回。同时，如果是read操作（write为0）
-也直接返回，因为proc_dointvec已经将stack_tracer_enabled的值返回给了用户空间，无需进行其它操作了;如果是写操作，并且stack_tracer_enabled的值与上一次不同，则需要进行相应的操作。
+也直接返回，因为proc_dointvec已经将stack_tracer_enabled的值返回给了用户空间，无需进行其它操作了;
+如果是写操作，并且stack_tracer_enabled的值与上一次不同，则需要进行相应的操作。

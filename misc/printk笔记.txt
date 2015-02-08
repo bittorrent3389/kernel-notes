@@ -12,7 +12,8 @@ asmlinkage int printk(const char *fmt, ...)
 
 判断要输出的字符串有没有换行：
 if (!(lflags & LOG_NEWLINE)) {
-	//如果cont中原来有数据，并且lflags有LOG_PREFIX标志或cont中的数据不是本进程的，先将cont中的数据flush到log_buf。
+	//如果cont中原来有数据，并且lflags有LOG_PREFIX标志或cont中的数据不是本进程的，
+	//先将cont中的数据flush到log_buf。
 	/*
 	 * Flush the conflicting buffer. An earlier newline was missing,
 	 * or another task also prints continuation lines.
@@ -22,7 +23,8 @@ if (!(lflags & LOG_NEWLINE)) {
 
 	//如果没有换行字符，尝试将其暂时保存在全局量cont里，等待下面出现换行字符时flush到log_buf里
 	//如果保存失败直接将其保存到log_buf里
-	//如果cont中原来没有数据，cont_add会将本次数据放入，如果cont中原来有本进程的数据，cont_add会将本次数据连接在上次数据后面。
+	//如果cont中原来没有数据，cont_add会将本次数据放入，如果cont中原来有本进程的数据，
+	//cont_add会将本次数据连接在上次数据后面。
 	/* buffer line if possible, otherwise store it right away */
 	if (!cont_add(facility, level, text, text_len))
 		log_store(facility, level, lflags | LOG_CONT, 0,
@@ -31,7 +33,8 @@ if (!(lflags & LOG_NEWLINE)) {
 	bool stored = false;
 
 	//查看cont里有上一条输出，如果其属于当前进程，则通过cont_add合并，再cont_flush到到log_buf里
-	//如果lflags有LOG_PREFIX标志，则把cont中和本次数据分别写入log_buf,也就是说先cont_flush　cont中的数据，再log_store本次数据。
+	//如果lflags有LOG_PREFIX标志，则把cont中和本次数据分别写入log_buf,也就是说先cont_flush　cont
+	//中的数据，再log_store本次数据。
 	/*
 	 * If an earlier newline was missing and it was the same task,
 	 * either merge it with the current buffer and flush, or if
@@ -63,8 +66,10 @@ log_buf是一个环形buffer，里面的每一条message记录由struct log结�
 ----------------
 
 从log_buf中取出数据：
-devkmsg_read，syslog_print等都通过log_from_idx找到相应的log结构，再通过log_text找到其中的message信息，最后返回给用户空间。
+devkmsg_read，syslog_print等都通过log_from_idx找到相应的log结构，再通过log_text找到其中的message信息，
+最后返回给用户空间。
 
 ----------------
 console_unlock：
-会通过console_cont_flush将cont里的数据读出来，写到console，也会通过log_from_idx将log_buf里的数据写到console。
+会通过console_cont_flush将cont里的数据读出来，写到console，也会通过
+log_from_idx将log_buf里的数据写到console。

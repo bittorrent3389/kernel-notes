@@ -3,7 +3,8 @@ driver_register()-->bus_add_driver()
 			   |_ bus = bus_get(drv->bus);
 			   |_kobject_init_and_add()
 			   |_driver_attach()
-bus_get()获得bus，kobject_init_and_add()初始化相应的kobject并在sysfs中添加相应目录，driver_attach()遍历这个bus上已经注册的device，并进行match与probe:
+bus_get()获得bus，kobject_init_and_add()初始化相应的kobject并在sysfs中添加相应目录，
+driver_attach()遍历这个bus上已经注册的device，并进行match与probe:
 drivers/base/dd.c
 int driver_attach(struct device_driver *drv)
 {
@@ -89,7 +90,8 @@ void pci_dev_put(struct pci_dev *dev)
 pci_release_dev() (drivers/pci/probe.c)
 这也就是ldd3 397页所说的
 “It then iterates over all devices that were attached to this driver and calls the release func-
-tion for it. This happens exactly like the previously mentioned release function for when a device is removed from the system.”
+tion for it. This happens exactly like the previously mentioned release function for when a device
+is removed from the system.”
 的意思。
 
 至于ldd3同一页下面说的down(&drv->unload_sem)与up(&drv->unload_sem)，则只在早期内核里才有，见

@@ -63,9 +63,11 @@ pci_scan_device()通过alloc_pci_dev/pci_setup_device分配一个pci_dev结构�
 pci_scan_child_bus()会递归扫描所有pci总线。
 
 pci_device_add()则把pci_dev结构加入bus->devices队列。
-此外，pci_device_add()还会做另一件事，就是调用device_initialize()初始化struct pci_dev里面的struct device结构。这是向设备模型注册一个device的第一步。
+此外，pci_device_add()还会做另一件事，就是调用device_initialize()初始化struct pci_dev里面的struct device结构。
+这是向设备模型注册一个device的第一步。
 
-之后，在扫描完所有总线和设备后pci_scan_root_bus()，通过调用pci_bus_add_devices()-->pci_bus_add_device()-->device_add()完成第二步，将所有pci设备加入系统设备模型。
+之后，在扫描完所有总线和设备后pci_scan_root_bus()，通过调用pci_bus_add_devices()->pci_bus_add_device()->device_add()
+完成第二步，将所有pci设备加入系统设备模型。
 
 注：ldd3中393页说将pci设备加入设备模型中是通过device_register()来完成的，但这里可以看出当前的内核是通过两步来完成的。
 

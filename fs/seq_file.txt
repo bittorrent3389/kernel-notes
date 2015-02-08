@@ -4,7 +4,9 @@ synthetic files from sequences of records.
 读取seq_file可以返回一系列的record，其中，
 struct seq_file结构中index为当前record的序号，会作为op->start()和op->show()的参数，从０开始计数。
 
-seq_read()的参数ppos一般与struct seq_file结构中的read_pos相等(何时不等？)，与文件偏指针原有含义相同，即表示在seq_file中的当前位置，单位为字节。这样，在文件层面上，通过file->f_ops保证了文件的抽象为字节流，虽然底层的实现为sequences of records（所以底层的索引为struct seq_file->index）。
+seq_read()的参数ppos一般与struct seq_file结构中的read_pos相等，与文件偏指针原有含义相同，
+即表示在seq_file中的当前位置，单位为字节。这样，在文件层面上，通过file->f_ops保证了文件的抽象为字节流，
+虽然底层的实现为sequences of records（所以底层的索引为struct seq_file->index）。
 
 也就是说read_pos为读了多少字节，也即当前要读的位置。
 ppos为当前位置（单位为字节）。
@@ -457,7 +459,8 @@ int seq_vprintf(struct seq_file *m, const char *f, va_list args)
 
 
 	if (m->count < m->size) {
-		//这里m->count不为０一定是２６６行的情况，即所要数据没有读完的情况，缓冲区前端一定没有空洞，否则会在seq_read前面被读走。
+		//这里m->count不为０一定是２６６行的情况，即所要数据没有读完的情况，
+		//缓冲区前端一定没有空洞，否则会在seq_read前面被读走。
 		len = vsnprintf(m->buf + m->count, m->size - m->count, f, args);
 		if (m->count + len < m->size) {
 			m->count += len;

@@ -10,8 +10,10 @@ while (!condition) {        /* condition is the event that we are waiting for */
     schedule();
 }
 finish_wait(&q, &wait);
-这里prepare_to_wait之后的判断防的是while(!condition)之后，prepare_to_wait之前condition条件发生变成，condition成立的情况，因为在prepare_to_wait这前还没有加入等待队列，不会因条件成熟而被唤醒。
-而从prepare_to_wait到schedule();让出cpu之前的这段时间并不需要防，因为已经加入等待队列，这段时间即使条件成立，会被唤醒，schedule()不会让出cpu。
+这里prepare_to_wait之后的判断防的是while(!condition)之后，prepare_to_wait之前condition条件发生变成，
+condition成立的情况，因为在prepare_to_wait这前还没有加入等待队列，不会因条件成熟而被唤醒。
+而从prepare_to_wait到schedule();让出cpu之前的这段时间并不需要防，因为已经加入等待队列，
+这段时间即使条件成立，会被唤醒，schedule()不会让出cpu。
 
 ldd3中scull_p_read()中的例子：
 static ssize_t scull_p_read (struct file *filp, char __user *buf, size_t count,

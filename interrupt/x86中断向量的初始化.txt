@@ -37,7 +37,10 @@ void __init native_init_IRQ(void)
      ... ...
 }
 
-      这里interrupt[]是一个函数指针数组，保存着各个interrupt vector的处理函数。这些函数称为stub(就是2.4内核中的IRQ0x**_interrupt()，见《情景分析3.2节，中断向量表IDT的初始化》)，作用是获取相应的vector号并压入栈中，调用entry_32.S中的common_interrupt，进而调用do_IRQ()。数组interrupt和这些stub也是在文件entry_32.S中定义的： 
+      这里interrupt[]是一个函数指针数组，保存着各个interrupt vector的处理函数。
+这些函数称为stub(就是2.4内核中的IRQ0x**_interrupt()，见《情景分析3.2节，中断向量表IDT的初始化》)，
+作用是获取相应的vector号并压入栈中，调用entry_32.S中的common_interrupt，进而调用do_IRQ()。
+数组interrupt和这些stub也是在文件entry_32.S中定义的： 
 
 /*
  * Build the entry stubs and pointer table with some assembler magic.
@@ -86,7 +89,8 @@ common_interrupt:
  addl $-0x80,(%esp) /* Adjust vector into the [-256,-1] range */
  SAVE_ALL
  TRACE_IRQS_OFF
-    //由于do_IRQ没有asmlinkage标志，所以通过寄存器来传递参数，因其只有一个参数struct pt_regs *regs，所以通过%eax来传递栈指针。
+ //由于do_IRQ没有asmlinkage标志，所以通过寄存器来传递参数，因其只有一个参数
+ //struct pt_regs *regs，所以通过%eax来传递栈指针。
  movl %esp,%eax
  call do_IRQ  
  jmp ret_from_intr

@@ -4,16 +4,21 @@ do_sys_open()
         |_do_filp_open()
         |_fsnotify_open()
         |_fd_install()
-get_unused_fd_flags()申请空闲fd号，_do_filp_open打开文件并返回struct file结构，_fd_install将fd和struct file结合在一起。
+get_unused_fd_flags()申请空闲fd号，_do_filp_open打开文件并返回struct file结构，
+_fd_install将fd和struct file结合在一起。
 fs/namei.c
 do_filp_open()-->path_openat()
                                    |_get_empty_filp()
                                    |_path_init()
                                    |_link_path_walk()
                                    |_do_last()
-这里完成对目标路径的搜索工作，首先在do_filp_open()的栈上分配了一个数据结构struct nameidata nd;这个数据结构在搜索过程中用来保存已经搜索到的目录项（path component）。
+这里完成对目标路径的搜索工作，首先在do_filp_open()的栈上分配了一个数据结构struct nameidata nd;
+这个数据结构在搜索过程中用来保存已经搜索到的目录项（path component）。
 path_init初始化，设置搜索的起点为根目录（nd->path = nd->root;）或当前目录（nd->path = fs->pwd;），并设置nd->inode。
-link_path_walk完成大部分的路径搜索工作，待link_path_walk返回后，其参数nd的nd->last 里保存的是目标路径中最后一部分的目录/文件名， nd->last_type则是其类型，注意这个目录项还没有搜索，也就没有建立其dentry和inode结构（假设以前也没有访问过）。而nd->path和nd->inode则对应上一层目录项的path和inode，此时，上面各层目录项的dentry和inode结构都已经创建。
+link_path_walk完成大部分的路径搜索工作，待link_path_walk返回后，其参数nd的nd->last 里保存的是目标路径中
+最后一部分的目录/文件名， nd->last_type则是其类型，注意这个目录项还没有搜索，也就没有建立其dentry和inode结构
+（假设以前也没有访问过）。而nd->path和nd->inode则对应上一层目录项的path和inode，此时，上面各层目录项的dentry和
+inode结构都已经创建。
 
 link_path_walk()
 这个函数的主体结构是一个for循环，逐层扫描搜索目标路径中的各层目录项：
@@ -23,7 +28,8 @@ static int link_path_walk(const char *name, struct nameidata *nd)
  for(;;) {
      struct qstr this;    //this用来保存本次循环所要寻找的、当前path component
  
-     //遍历的过程中需要对目标路径中的各层目录都有MAY_EXEC权限，这里通过inode_permission(nd->inode, MAY_EXEC)对各层路径进行检查。
+     //遍历的过程中需要对目标路径中的各层目录都有MAY_EXEC权限，
+     //这里通过inode_permission(nd->inode, MAY_EXEC)对各层路径进行检查。
      err = may_lookup(nd);
 
      //计算当前path component的hash值并保存在this.hash中（32位），并返回当前component的长度
@@ -97,10 +103,14 @@ walk_component()
         |_path_to_nameidata()
         |_ nd->inode = inode;
         先通过lookup_fast-->_d_lookup()在dentry的hash数组dentry_hashtable 里找，如果找不到就通过
-lookup_slow()-->lookup_dcache()-->d_lookup()再寻找一次，如果还是找不到，就通过d_alloc()分配一个dentry结构，然后以其为参数，调用lookup_real()，进而调用dir->i_op->lookup(dir, dentry, flags);从相应的文件系统中读出相应的信息以填充完善dentry结构并分配inode结构，这也是dir->i_op->lookup()的作用，创建inode的过程可以借助VFS的接口。这可以从下面sysfs和ext2系统lookup函数的例子可以看出[1]。
+lookup_slow()-->lookup_dcache()-->d_lookup()再寻找一次，如果还是找不到，就通过d_alloc()分配一个dentry结构，
+然后以其为参数，调用lookup_real()，进而调用dir->i_op->lookup(dir, dentry, flags);从相应的文件系统中读出
+相应的信息以填充完善dentry结构并分配inode结构，这也是dir->i_op->lookup()的作用，创建inode的过程可以借助VFS的接口。
+这可以从下面sysfs和ext2系统lookup函数的例子可以看出[1]。
         walk_component()里找到相应的dentry后，还通过path_to_nameidata将其设置到nd里，所以
 walk_component返回时nd已经更新为本轮循环要找的当前component，下面就要通过循环寻找下一个component。
-        对于正常文件walk_component返回０,返回小于０的值表示出错，大于０表示是链接。下面的do_last()的返回值也是这样的。
+        对于正常文件walk_component返回０,返回小于０的值表示出错，大于０表示是链接。下面的do_last()的返回值
+也是这样的。
         下面是path_openat里的do_last函数：
 do_last
         |_lookup_fast
@@ -116,9 +126,13 @@ do_last
                 |_do_dentry_open()
                         |_ f->f_op = fops_get(inode->i_fop);
                         |_ open = f->f_op->open/open()
-      先通过lookup_fast找一下，如果能在hash表里找到就直接跳到标号finish_lookup处调用_path_to_nameidata，否则就要通过lookup_open-->lookup_dcache/lookup_real分配并设置目标文件或目录的dentry与结构。同时lookup_open还有个功能就是如果目标文件不存在，而open时flags中又有O_CREAT标志，则通过vfs_create创建相应文件。
+      先通过lookup_fast找一下，如果能在hash表里找到就直接跳到标号finish_lookup处调用_path_to_nameidata，
+否则就要通过lookup_open-->lookup_dcache/lookup_real分配并设置目标文件或目录的dentry与结构。
+同时lookup_open还有个功能就是如果目标文件不存在，而open时flags中又有O_CREAT标志，则通过vfs_create创建相应文件。
       而在do_last()中调用的path_to_nameidata()，又进一步把找到的目标目录或文件的dentry和mnt设置到
-nd的path里： nd->path.dentry = path->dentry; nd->path.mnt = path->mnt;所以，从do_last返回后，参数nd(nd->path)中保存的是目标路径的最后一个目录项（因为其已经搜索到），do_last()第二个参数path同样保存这个目录项，这些可以在下面的follow_link中使用。
+nd的path里： nd->path.dentry = path->dentry; nd->path.mnt = path->mnt;所以，从do_last返回后，
+参数nd(nd->path)中保存的是目标路径的最后一个目录项（因为其已经搜索到），do_last()第二个参数path同样保存
+这个目录项，这些可以在下面的follow_link中使用。
       然后，通过may_open()是否可以以相应的权限打开相应的文件。
       最后，又通过finish_open把相应的file结构和dentry结构关联起来，open的主要工作完成了。
       

@@ -10,7 +10,8 @@ struct __kfifo {
  unsigned int esize;
  void *data;
 };
-结构中有两个unsigned int的cursor　in和out，实际运行过程中虽然有可能写到了缓冲区的尾部而绕回到缓冲区头部来写，但是in和out总是增加的，并且in>=out。
+结构中有两个unsigned int的cursor　in和out，实际运行过程中虽然有可能写到了缓冲区的尾部而绕回到缓冲区头部来写，
+但是in和out总是增加的，并且in>=out。
 
 所以队列中的量为：
 #define kfifo_len(fifo) \
@@ -35,11 +36,11 @@ __kfifo_uint_must_check_helper( \
  fifo->size - (fifo->in – fifo->out) = fifo->size – fifo->in + fifo->out
 算得。
 
-值得注意的是即便fifo->in溢出变成了一个小的数，而此时fifo->out为一个很大的数，这时fifo->in – fifo->out也会反向溢出，得到一个大于fifo->in而小于fifo->size的数,这个数就是队列中的数据量。也就是说fifo->in – fifo->out永远等于队列中的数据量，进而上面计算实际可用空间的公式 fifo->size - (fifo->in – fifo->out) = fifo->size – fifo->in + fifo->out也总是成立。
+值得注意的是即便fifo->in溢出变成了一个小的数，而此时fifo->out为一个很大的数，这时fifo->in – fifo->out
+也会反向溢出，得到一个大于fifo->in而小于fifo->size的数,这个数就是队列中的数据量。也就是说fifo->in – fifo->out
+永远等于队列中的数据量，进而上面计算实际可用空间的公式
+fifo->size - (fifo->in – fifo->out) = fifo->size – fifo->in + fifo->out也总是成立。
 
 见：
 http://wangcong.org/blog/archives/44
 http://blog.csdn.net/linyt/article/details/5764312
-
-
-

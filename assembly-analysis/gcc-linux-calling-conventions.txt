@@ -30,7 +30,9 @@ ifeq ($(CONFIG_X86_32),y)
 
 https://gcc.gnu.org/onlinedocs/gcc-3.4.6/gcc/Function-Attributes.html
 regparm (number)
-    On the Intel 386, the regparm attribute causes the compiler to pass up to number integer arguments in registers EAX, EDX, and ECX instead of on the stack. Functions that take a variable number of arguments will continue to be passed all of their arguments on the stack. 
+    On the Intel 386, the regparm attribute causes the compiler to pass up to number integer
+arguments in registers EAX, EDX, and ECX instead of on the stack. Functions that take a variable
+number of arguments will continue to be passed all of their arguments on the stack.
 
 还有：
 http://en.wikibooks.org/wiki/GNU_C_Compiler_Internals/Function_calls_4_1

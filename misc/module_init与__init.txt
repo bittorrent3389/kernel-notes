@@ -39,7 +39,8 @@ module_init()定义在include/linux/init.h里：
 
 #endif
 
-也就是说，当驱动不是编成module，而是编进内核时，会在.initcall6.init这个section里创建一个__initcall_##fn##id结构，指向用户提供的初始化函数。
+也就是说，当驱动不是编成module，而是编进内核时，会在.initcall6.init这个section里创建一个
+__initcall_##fn##id结构，指向用户提供的初始化函数。
 
 而当驱动编成module时，会为用户提供的初始化函数initfn提供一个别名init_module，所以用
 #readelf -s hello.ko

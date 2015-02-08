@@ -3,12 +3,15 @@
 然后跳过handle_irq_event()，之后当前的中断处理返回后检测到IRQS_PENDING，然后继续处理。
 
 2. 在以前的内核中，当处理某个中断时，当前cpu上的其它中断通道的中断是被允许的（从代码上来看，
-进入中断处理后此cpu上的所有中断都应该是被禁止的，然后又通过 local_irq_enable_in_hardirq打开的，见下面的代码）注*，如需关闭当前cpu上的其它中断，则可以在request_irq()时使用IRQF_DISABLED标志。
+进入中断处理后此cpu上的所有中断都应该是被禁止的，然后又通过 local_irq_enable_in_hardirq打开的，见下面的代码）
+注*，如需关闭当前cpu上的其它中断，则可以在request_irq()时使用IRQF_DISABLED标志。
 
-3. 现在的代码中，处理一个中断时当前cpu的的其它中断默认就是关闭的，所以废除了IRQF_DISABLED标志位，这是由下面的patch开始的。
+3. 现在的代码中，处理一个中断时当前cpu的的其它中断默认就是关闭的，所以废除了IRQF_DISABLED标志位，
+这是由下面的patch开始的。
 
-＊但是在调用local_irq_enable_in_hardirq以前的软件中断处理路径上没有找到相应关闭当前cpu中断的代码，实际上这是发生中断时硬件关闭的。
-见《情景分析》３.4节中断的响应与服务：“当通过中断门进入中断服务时，CPU的中断响应机制就自动被关闭了。”
+＊但是在调用local_irq_enable_in_hardirq以前的软件中断处理路径上没有找到相应关闭当前cpu中断的代码，
+实际上这是发生中断时硬件关闭的。见《情景分析》３.4节中断的响应与服务：“当通过中断门进入中断服务时，
+CPU的中断响应机制就自动被关闭了。”
 
 Ref:
 http://lwn.net/Articles/380931/

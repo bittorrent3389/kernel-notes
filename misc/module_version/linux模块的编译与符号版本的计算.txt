@@ -1,7 +1,9 @@
 kernelsymfile := $(objtree)/Module.symvers
 modulesymfile := $(firstword $(KBUILD_EXTMOD))/Module.symvers
 
-每个模块ko文件中都有一个__versions段，其中标明了此模块所引用的符号的version（实际是一些crc值），另外，编译模块后，在相应目录下会生成一个Module.symvers文件，标明了当前模块及其子目录的模块所导出的符号及crc值，那这些符号的crc值又是如何生成的呢？在文件scripts/Makefile.modpost中描述了模块build的过程：
+每个模块ko文件中都有一个__versions段，其中标明了此模块所引用的符号的version（实际是一些crc值），
+另外，编译模块后，在相应目录下会生成一个Module.symvers文件，标明了当前模块及其子目录的模块所导出的
+符号及crc值，那这些符号的crc值又是如何生成的呢？在文件scripts/Makefile.modpost中描述了模块build的过程：
 # a) The individual .o files used for the module
 # b) A <module>.o file which is the .o files above linked together
 # c) A <module>.mod file in $(MODVERDIR)/, listing the name of the
@@ -33,7 +35,8 @@ modulesymfile := $(firstword $(KBUILD_EXTMOD))/Module.symvers
 
 # Step 4 is solely used to allow module versioning in external modules,
 # where the CRC of each module is retrieved from the Module.symvers file.
-实际上，符号的crc值在第一阶段生成individual .o文件时就生成了，并且是通过工具scripts/genksyms/genksyms生成的。在根目录下的Makefile里有：
+实际上，符号的crc值在第一阶段生成individual .o文件时就生成了，并且是通过工具scripts/genksyms/genksyms生成的。
+在根目录下的Makefile里有：
 GENKSYMS = scripts/genksyms/genksyms
 而scripts/Makefile.build：
 define rule_cc_o_c
@@ -79,9 +82,13 @@ cmd_gensymtypes =                                                           \
      $(if $(KBUILD_PRESERVE),-p)                                            \
      -r $(firstword $(wildcard $(2:.symtypes=.symref) /dev/null))
 
-如上面的注释所说，cmd_cc_o_c的作用是把源文件编译成.tmp_<file>.o，而cmd_modversions的作用就是在编译之后的目标文件里有__ksymtab（有要导出的符号）的情况下先通过CPP（定义于根目录下Makefile）预编译一下源文件，再调用GENKSYMS工具生成导出符号的crc信息，并保存到文件.tmp_<file>.ver里，留给后面的ld来作为链接器脚本来使用（下面的LD命令）。最后LD使用.tmp_<file>.o和.tmp_<file>.ver生成
+如上面的注释所说，cmd_cc_o_c的作用是把源文件编译成.tmp_<file>.o，而cmd_modversions的作用
+就是在编译之后的目标文件里有__ksymtab（有要导出的符号）的情况下先通过CPP（定义于根目录下
+Makefile）预编译一下源文件，再调用GENKSYMS工具生成导出符号的crc信息，并保存到文件.tmp_<file>.ver里，
+留给后面的ld来作为链接器脚本来使用（下面的LD命令）。最后LD使用.tmp_<file>.o和.tmp_<file>.ver生成
 <file>.o，并删除上述两个临时文件。
-在.tmp_<file>.o的符号表里里实际上就含有符号__crc_exported_symbol，这是通过EXPORT_SYMBOL宏，通过include/linux/export.h里的宏定义展开的：
+在.tmp_<file>.o的符号表里里实际上就含有符号__crc_exported_symbol，这是通过EXPORT_SYMBOL宏，通过
+include/linux/export.h里的宏定义展开的：
 #ifndef __GENKSYMS__
 #ifdef CONFIG_MODVERSIONS
 /* Mark the CRC weak since genksyms apparently decides not to
@@ -117,17 +124,22 @@ cmd_gensymtypes =                                                           \
 #endif /* __GENKSYMS__ */
 
 注意上面第一次完整编译生成.tmp_<file>.o时是没有定义__GENKSYMS__的，所以就有声明：
-extern void *__crc_exported_symbol，所以在.tmp_<file>.o的符号表里__crc_exported_symbol是一个unresolved符号。后面通过ld命令，对其进行修正。、
-注意第二次使用CPP预编译时定义了符号__GENKSYMS__，所以到genksyms对其进行处理时其EXPORT_SYMBOL等是没有展开的。
+extern void *__crc_exported_symbol，所以在.tmp_<file>.o的符号表里__crc_exported_symbol
+是一个unresolved符号。后面通过ld命令，对其进行修正。
+注意第二次使用CPP预编译时定义了符号__GENKSYMS__，所以到genksyms对其进行处理时其
+EXPORT_SYMBOL等是没有展开的。
 对应hid的例子，通过make -n命令可以看到详细的编译命令。可以用scripts中的脚本对几个步骤进行分解，
 并使用readelf等工具查看其中的符号值。
 
 ============================================
 
-至此，只是在导出符号的模块中生成了所要导出符号的crc值，并写到了其符号表中Elf_Sym->st_value 域中，并没有写到要使用符号的模块(如hid-magicmouse就要使用hid模块里的hid_unregister__driver等函数)的
+至此，只是在导出符号的模块中生成了所要导出符号的crc值，并写到了其符号表中Elf_Sym->st_value
+域中，并没有写到要使用符号的模块(如hid-magicmouse就要使用hid模块里的hid_unregister__driver等函数)的
 file.mod.c中进而写到其ko文件的__versions段中，这由下面的modpost程序来完成。
-        modpost的过程就是上面描述的Stage 2，在scripts/Makefile.modpost里：
-        第一步就是找到所编译目录下，目录.tmp_versions下面的.mod文件，并找出目标模块列表（MODVERDIR 定义在根目录下的Makefile里）：
+
+modpost的过程就是上面描述的Stage 2，在scripts/Makefile.modpost里：
+第一步就是找到所编译目录下，目录.tmp_versions下面的.mod文件，并找出目标模块列表
+（MODVERDIR 定义在根目录下的Makefile里）：
 
 ifeq ("$(origin M)", "command line")
   KBUILD_EXTMOD := $(M)
@@ -154,13 +166,14 @@ modpost = scripts/mod/modpost                    \
 PHONY += __modpost
 __modpost: $(modules:.ko=.o) FORCE
  $(call cmd,modpost) $(wildcard vmlinux)
-        以各.o文件，vmlinux为参数调用scripts/mod/modpost，根据编译选项的不同可能还有其它参数。其中
+    以各.o文件，vmlinux为参数调用scripts/mod/modpost，根据编译选项的不同可能还有其它参数。其中
 $(if $(KBUILD_EXTMOD),-i,-o) $(kernelsymfile) 即是使用源码根目录下的Module.symvers，
 $(if $(KBUILD_EXTMOD),-I $(modulesymfile)) 是使用所编译目录下的Module.symvers：
           kernelsymfile := $(objtree)/Module.symvers
           modulesymfile := $(firstword $(KBUILD_EXTMOD))/Module.symvers
         scripts/mod/modpost：
-        在通过read_dump读入所输入的Module.symvers里的符号和模块信息。modpost里维护了struct module结构的链表modules：
+        在通过read_dump读入所输入的Module.symvers里的符号和模块信息。modpost里维护了struct module
+	结构的链表modules：
         struct module {
                 struct module *next;
                 const char *name;
@@ -174,23 +187,42 @@ $(if $(KBUILD_EXTMOD),-I $(modulesymfile)) 是使用所编译目录下的Module.
                 char      srcversion[25];
                 int is_dot_o;
         };
-        而struct symbol则代表了一个符号，如果一个模块引用了其它模块中的符号，那么此符号在其符号表中相应的类型为SHN_UNDEF，在handle_modversions中会通过alloc_symbol为此符号分配一个symbol结构，并挂入module结构的unres队列，表明"unresolved"。
-        read_dump中如果读到的模块尚未创建module结构，则通过new_module为其创建并加入modules队列。因为Module.symvers中的符号都是导出符号，所以在sym_add_exported()里，如果发现其尚未创建symbol结构，则通过new_symbol创建一个结构并加入symbolhash里，注意symbolhash里存放的都是导出符号。然后通过sym_update_crc()更新符号的crc(从Module.symvers读取)。
-        然后，通过read_symbols读取输入的.o文件里的符号：a)如果引用了外部符号（类型为SHN_UNDEF的符号），就加入到mod->unres队列。b)如果有前辍为__ksymtab_的普通符号，说明其为一个导出符号，将其去掉前辍后的符号通过sym_add_exported加入symbolhash里。c)如果遇到类型为SHN_ABS且前辍为__crc_的符号，则其符号值为相应去掉前辍后符号的crc值，此时通过sym_update_crc更新符号的crc值。
+        而struct symbol则代表了一个符号，如果一个模块引用了其它模块中的符号，那么此符号在其符号表中
+相应的类型为SHN_UNDEF，在handle_modversions中会通过alloc_symbol为此符号分配一个symbol结构，并挂入
+module结构的unres队列，表明"unresolved"。
+        read_dump中如果读到的模块尚未创建module结构，则通过new_module为其创建并加入modules队列。
+因为Module.symvers中的符号都是导出符号，所以在sym_add_exported()里，如果发现其尚未创建symbol结构，
+则通过new_symbol创建一个结构并加入symbolhash里，注意symbolhash里存放的都是导出符号。然后通过
+sym_update_crc()更新符号的crc(从Module.symvers读取)。
+        然后，通过read_symbols读取输入的.o文件里的符号：
+	a)如果引用了外部符号（类型为SHN_UNDEF的符号），就加入到mod->unres队列。
+	b)如果有前辍为__ksymtab_的普通符号，说明其为一个导出符号，将其去掉前辍后的符号通过sym_add_exported
+加入symbolhash里。
+	c)如果遇到类型为SHN_ABS且前辍为__crc_的符号，则其符号值为相应去掉前辍后符号的crc值，
+此时通过sym_update_crc更新符号的crc值。
         在read_symbols的最后还有一行：
         if (modversions)
                 mod->unres = alloc_symbol("module_layout", 0, mod->unres);
         也就是说如果开启了modversions选项，会为模块加入一个"module_layout"符号用来检验module相关结构的版本。
         回到main函数后就通过一个for循环来遍历所有module结构，生成相应的<file>.mod.c文件：
-add_versions()遍历模块的mod->unres队列，通过find_symbol从symbolhash里寻找相应符号的crc值，再通过一个循环生成<file>.mod.c文件中的static const struct modversion_info ____versions[]数组。后面还通过add_depends及add_srcversion向文件中添加了static const char __module_depends[]和srcversion等，最后通过write_if_changed写到相应的<file>.mod.c文件。
-        最后，通过write_dump生成相应模块目录下的Module.symvers文件，虽然其是遍历整个symbolhash数组，但通过dump_sym过滤掉了内核符号，即只生成包含当前模块符号的Module.symvers文件。
+add_versions()遍历模块的mod->unres队列，通过find_symbol从symbolhash里寻找相应符号的crc值，
+再通过一个循环生成<file>.mod.c文件中的static const struct modversion_info ____versions[]数组。
+后面还通过add_depends及add_srcversion向文件中添加了static const char __module_depends[]和srcversion等，
+最后通过write_if_changed写到相应的<file>.mod.c文件。
+        最后，通过write_dump生成相应模块目录下的Module.symvers文件，虽然其是遍历整个symbolhash数组，
+但通过dump_sym过滤掉了内核符号，即只生成包含当前模块符号的Module.symvers文件。
         通过Makefile.modpost中的 
         $(if $(KBUILD_EXTMOD),-i,-o) $(kernelsymfile)   \  和
         $(if $(KBUILD_EXTMOD),-o $(modulesymfile))      \
-       可以看出，如果是编译外部模块（KBUILD_EXTMOD不为空），则通过-i参数读顶层Module.symvers文件（kernelsymfile），并且在所编译模块目录下写Module.symvers文件（此时$(modulesymfile)对应modpost里的dump_write）。
-        如果是编译整个源码（KBUILD_EXTMOD为空），则通过-o参数，在$(kernelsymfile)即源码顶层写Module.symvers文件（此时$(kernelsymfile)对应modpost里的dump_write）。
+        可以看出，如果是编译外部模块（KBUILD_EXTMOD不为空），则通过-i参数读顶层Module.symvers文件
+（kernelsymfile），并且在所编译模块目录下写Module.symvers文件（此时$(modulesymfile)对应modpost里的dump_write）。
+        如果是编译整个源码（KBUILD_EXTMOD为空），则通过-o参数，在$(kernelsymfile)即源码顶层写Module.symvers文件
+（此时$(kernelsymfile)对应modpost里的dump_write）。
         
-        还有应该说明的是，在只编译部分模块而没有编译整个内核源码时，内核里的导出接口可能已经变化，此时模块只是“借用”了顶层Module.symvers文件中所引用符号的crc值，此时虽然模块可以安装成功，但并不能说明在正确的引用内核的接口。所以最好还是完整编译源码，这样模块里__versions段里符号的crc值都是模块实际使用接口的crc值（因为模块在源码树中，且能成功编译），这样检测更完全。
+        还有应该说明的是，在只编译部分模块而没有编译整个内核源码时，内核里的导出接口可能已经变化，
+此时模块只是“借用”了顶层Module.symvers文件中所引用符号的crc值，此时虽然模块可以安装成功，
+但并不能说明在正确的引用内核的接口。所以最好还是完整编译源码，这样模块里__versions段里符号的crc值
+都是模块实际使用接口的crc值（因为模块在源码树中，且能成功编译），这样检测更完全。
 
 ===============================================
 
@@ -207,11 +239,18 @@ add_versions()遍历模块的mod->unres队列，通过find_symbol从symbolhash�
 [29409.788771] hid_magicmouse: Unknown symbol hid_disconnect (err -22)
 [29409.788811] hid_magicmouse: disagrees about version of symbol hid_open_report
 [29409.788815] hid_magicmouse: Unknown symbol hid_open_report (err -22)
-        而在编译make M=drivers/hid/时hid.ko也被重新编译了，所以hid-maigcmouse.ko里的crc与新hid.ko里的一致，而与当前内核里的不一致，所以加载不成功。可以重新insmod新编出来的hid.ko，但其又有几个模块在依赖，不容易卸载，最好还是调整内核源码（查看相应接口近期变化），重新编译。
-        即使内核版本一致，但config不同的话，也可能导致接口的不同，致使crc不同，所以，一定要用相同的config，不要运行make localmodcong。在使用了相同的.config后，编译出来的hid-magicmouse.ko所要求符号的crc与内核中的符号版本一致了，问题解决。
+        而在编译make M=drivers/hid/时hid.ko也被重新编译了，所以hid-maigcmouse.ko里的crc与新hid.ko里的一致，
+而与当前内核里的不一致，所以加载不成功。可以重新insmod新编出来的hid.ko，但其又有几个模块在依赖，不容易卸载，
+最好还是调整内核源码（查看相应接口近期变化），重新编译。
+        即使内核版本一致，但config不同的话，也可能导致接口的不同，致使crc不同，所以，一定要用相同的config，
+不要运行make localmodcong。在使用了相同的.config后，编译出来的hid-magicmouse.ko所要求符号的crc与内核中的
+符号版本一致了，问题解决。
 
         验证：两个文件分别是使用config-3.11.0-13-generic与make localmodconfig生成的.config，通过
-make drivers/hid/hid-core.i分别生成hid-core.i.fullconfig与hid-core.i.localmodconfig。然后，将两个文件中的EXPORT_SYMBOL_GPL(hid_unregister_driver);的展开注释掉，替换成EXPORT_SYMBOL_GPL(hid_unregister_driver);。然后再用genksyms生成的hid_unregister_driver确实不同（虽然两个.i文件中hid_unregister_driver的签名是一样的，可能是间接依赖的某些数据结构不同）：
+make drivers/hid/hid-core.i分别生成hid-core.i.fullconfig与hid-core.i.localmodconfig。然后，将两个文件中
+的EXPORT_SYMBOL_GPL(hid_unregister_driver);的展开注释掉，替换成EXPORT_SYMBOL_GPL(hid_unregister_driver);。
+然后再用genksyms生成的hid_unregister_driver确实不同（虽然两个.i文件中hid_unregister_driver的签名是一样的，
+可能是间接依赖的某些数据结构不同）：
 cat hid-core.i.fullconfig | ../../scripts/genksyms/genksyms    -r /dev/null
 __crc_hid_unregister_driver = 0xf89a65eb ;
 
@@ -221,20 +260,22 @@ __crc_hid_unregister_driver = 0x177f4a7f ;
         相关文件：
         full config:config-3.11.0-13-generic 
 	make localmodconfig:.config
-       生成的中间文件：
+        生成的中间文件：
                          hid-core.i.fullconfig                                    hid-core.i.localmodconfig
         注意：
-        直接拷贝.config文件后马上make M=drivers/hid/不起作用，编译时还是按照之前的.config在编译，这个现在还不清楚是为什么。要先make prepare后再make M=drivers/hid/才起作用。不知到完整编译内核时是不是也有这个问题。
+        直接拷贝.config文件后马上make M=drivers/hid/不起作用，编译时还是按照之前的.config在编译，
+这个现在还不清楚是为什么。要先make prepare后再make M=drivers/hid/才起作用。不知到完整编译内核时
+是不是也有这个问题。
         而如果是使用make localmodconfig生成的.config文件，则不需要make prepare，可能是
 make localmodconfig之中包含了这一过程。
 
 ============================================
 
 Ref:[1]简述了模块版本检查机制
-      [2]为了安装模块采用了一种直接修改模块ko文件中__versions段中crc值的办法，虽然一般情况下不应这样，但可做参考
-      [3]使用vim xxd修改二进制文件的方法
+    [2]为了安装模块采用了一种直接修改模块ko文件中__versions段中crc值的办法，虽然一般情况下不应这样，但可做参考
+    [3]使用vim xxd修改二进制文件的方法
 
-        [1]http://www.ibm.com/developerworks/cn/linux/l-cn-kernelmodules/#major1
-        [2]http://rickey-nctu.blogspot.com/2013/06/kernel-module-insert-failed-disagrees.html
-        [3]http://vim.wikia.com/wiki/Hex_dump
+    [1]http://www.ibm.com/developerworks/cn/linux/l-cn-kernelmodules/#major1
+    [2]http://rickey-nctu.blogspot.com/2013/06/kernel-module-insert-failed-disagrees.html
+    [3]http://vim.wikia.com/wiki/Hex_dump
 

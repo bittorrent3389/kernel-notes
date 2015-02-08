@@ -1,4 +1,5 @@
-    将一个整数(key)转化为大小为bits（有2^bits个key，这里的意思是key可以用bits位来表示）的hash表中的一个index值（注意不能称为key，下面的例子有误）可以通过hash_long:
+    将一个整数(key)转化为大小为bits（有2^bits个key，这里的意思是key可以用bits位来表示）的hash表中的一个
+index值（注意不能称为key，下面的例子有误）可以通过hash_long:
 include/linux/hash.h
 
 #if BITS_PER_LONG == 32

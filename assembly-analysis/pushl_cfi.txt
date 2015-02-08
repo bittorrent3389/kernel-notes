@@ -8,7 +8,8 @@ arch/x86/include/asm/dwarf2.h
  pushl \reg
  CFI_ADJUST_CFA_OFFSET 4
  .endm
-.cfi_adjust_cfa_offset是gcc的assembler directives，用于产生dwarf格式的调试信息。每当有栈指针变化时都要使用它。所以entry_32.S里使用push_cfi对push和.cfi_adjust_cfa_offset进行封装。并且修改esp后要使用CFI_ADJUST_CFA_OFFSET，如：
+.cfi_adjust_cfa_offset是gcc的assembler directives，用于产生dwarf格式的调试信息。每当有栈指针变化时都要使用它。
+所以entry_32.S里使用push_cfi对push和.cfi_adjust_cfa_offset进行封装。并且修改esp后要使用CFI_ADJUST_CFA_OFFSET，如：
 sysenter_audit:
  testl $(_TIF_WORK_SYSCALL_ENTRY & ~_TIF_SYSCALL_AUDIT),TI_flags(%ebp)
  jnz syscall_trace_entry

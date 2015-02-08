@@ -41,7 +41,18 @@ EXPORT_SYMBOL(lockref_get);
  arch_mutex_cpu_relax(); \
  } \
 } while (0)
-这里在while循环外面取得lock_count的目的是为了取得一个未加锁的状态，在经过while条件的验证后，就可以通过compxchg与当前的lockref->lock_count来比较了。因为未加锁的状态不是定是0，所以需要得到一个比较的参照。
-如果取得了old.lock_count后有人获得了锁，并且没有马上释放，while条件不成立，会在外层do-while里循环等待，下次会取得新的lock_count再来比较。
-如果取得了old.lock_count后有人获得了锁，并且在while之前就释放了锁，那这和在while里面、cmpxchg之前取得了锁，又马上释放效果是一样的，cmpxchg不会成功，但会返回新的lockref值。注意这个值是未加锁的，所以下次while循环会成立。然后继续通过cmpxchg来判断。其实这和从外面进入while是一样的。
-如果在cmpxchg之前有人获得了锁并没有及时释放，cmpxchg会返回一个加锁的lockref，这时要跳出while，再到do-while里获得old.lock_count
+
+这里在while循环外面取得lock_count的目的是为了取得一个未加锁的状态，在经过while条件的验证后，
+就可以通过compxchg与当前的lockref->lock_count来比较了。因为未加锁的状态不是定是0，
+所以需要得到一个比较的参照。
+
+如果取得了old.lock_count后有人获得了锁，并且没有马上释放，while条件不成立，会在外层
+do-while里循环等待，下次会取得新的lock_count再来比较。
+
+如果取得了old.lock_count后有人获得了锁，并且在while之前就释放了锁，那这和在while里面、
+cmpxchg之前取得了锁，又马上释放效果是一样的，cmpxchg不会成功，但会返回新的lockref值。
+注意这个值是未加锁的，所以下次while循环会成立。然后继续通过cmpxchg来判断。
+其实这和从外面进入while是一样的。
+
+如果在cmpxchg之前有人获得了锁并没有及时释放，cmpxchg会返回一个加锁的lockref，这时要跳出while，
+再到do-while里获得old.lock_count

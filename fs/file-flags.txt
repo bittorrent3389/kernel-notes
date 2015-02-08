@@ -27,7 +27,8 @@ f_flags即是sys_open界面上传进来的参数flags，定义于include/uapi/as
 f_mode:
 sys_open()->do_sys_open()->do_filp_open()->path_openat()->do_last()->finish_open()->finish_open()->do_dentry_open():
     f->f_mode = OPEN_FMODE(f->f_flags) | FMODE_LSEEK |FMODE_PREAD | FMODE_PWRITE;
-f_mode是f_flags经过((flag + 1) & O_ACCMODE) 变换手得到的值,f_mode与f_flags使用不同的convention，所以要先加１变换，然后用O_ACCMODE过滤掉f_flags中一些与读写模式无关的标志位：
+f_mode是f_flags经过((flag + 1) & O_ACCMODE) 变换手得到的值,f_mode与f_flags使用不同的convention，所以要先加１变换，
+然后用O_ACCMODE过滤掉f_flags中一些与读写模式无关的标志位：
 #define OPEN_FMODE(flag) ((__force fmode_t)(((flag + 1) & O_ACCMODE) | \
      (flag & __FMODE_NONOTIFY)))
 f_mode的值定义在include/linux/fs.h中：
@@ -51,7 +52,9 @@ read/write permission in your open or ioctl function, but you don’t need to ch
 permissions for read and write, because the kernel checks before invoking your
 method. An attempt to read or write when the file has not been opened for that
 type of access is rejected without the driver even knowing about it.
-       这里的意思是在驱动的open函数里可以通过判断f_mode来判断文件的读写权限，因为对驱动的open函数f_op->open的调用是在do_dentry_open(fs/open.c)里对f_mode赋值之后进行的。当然，因为f_flags与f_mode是对应关系，所以在驱动的open函数里判断f_flags也是可以的，就像ldd3 59面scull_open里做的那样。
+   这里的意思是在驱动的open函数里可以通过判断f_mode来判断文件的读写权限，因为对驱动的open函数f_op->open
+的调用是在do_dentry_open(fs/open.c)里对f_mode赋值之后进行的。当然，因为f_flags与f_mode是对应关系，所以在
+驱动的open函数里判断f_flags也是可以的，就像ldd3 59面scull_open里做的那样。
 
 sys_open的参数mode:
 这个参数的作用是当目标文件不存在并要求创建时，新建文件的权限：

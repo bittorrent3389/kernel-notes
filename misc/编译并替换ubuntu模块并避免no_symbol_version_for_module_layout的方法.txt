@@ -3,7 +3,7 @@
 
 下面是不需完整编译代码的方法：
 
-１安装当前内核对应的源码：synaptics或sudo apt-get source linux-source-$(uname -r)
+１安装当前内核对应的源码：synaptics或apt-get source linux-source-$(uname -r)
 
 ２ cd /usr/src
 

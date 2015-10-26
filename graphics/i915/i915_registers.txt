@@ -1,0 +1,78 @@
+i915_registers
+==============
+
+Display Engine Interrupt Control Registers
+------------------------------------------
+
+4个32位寄存器，地址分别为：
+drivers/gpu/drm/i915/i915_reg.h
+#define DEISR   0x44000
+#define DEIMR   0x44004
+#define DEIIR   0x44008
+#define DEIER   0x4400c
+其中
+DEISR: Display Engine Interrupt Status Register
+DEIMR: Display Engine Interrupt Mask Register
+DEIIR: Display Engine Interrupt Identity Register
+DEIER: Display Engine Interrupt Enable Register
+
+32位寄存器中每一位的定义见
+可见Volume 2c: Command Reference: Registers, P484, P2654
+Display Engine Interrupt Bit Definition
+
+比如ironlake_irq_handler中关闭Master Interrupt Control:
+/* disable master interrupt before clearing iir  */
+de_ier = I915_READ(DEIER);
+I915_WRITE(DEIER, de_ier & ~DE_MASTER_IRQ_CONTROL);
+POSTING_READ(DEIER);
+
+相应的每一位的宏定义也在
+drivers/gpu/drm/i915/i915_reg.h
+里，如
+#define DE_MASTER_IRQ_CONTROL   (1 << 31)
+
+Ref:
+intel-gfx-prm-osrc-hsw-display.pdf
+Volume 11a: Display
+P187～P188
+
+intel-gfx-prm-osrc-hsw-commandreference-registers_0.pdf
+Volume 2c: Command Reference: Registers, P484, P2654
+
+South Display Engine Interrupt
+------------------------------
+以S开头的相应寄存器为PCH中的South Display Engine对应的寄存器：
+
+#define SDEISR  0xc4000
+#define SDEIMR  0xc4004
+#define SDEIIR  0xc4008
+#define SDEIER  0xc400c
+
+Ref:
+intel-gfx-prim-hsw.pdf P3899
+
+intel-gfx-prim-hsw.pdf P2936:
+South Display Engine (SDE) interrupt bits come from events within the south
+display engine.
+
+The SDE_IIR bits are ORed together to generate the South/PCH Display Interrupt
+Event which will appear in the North Display Engine Interrupt Control Registers.
+
+Only the rising edge of the PCH Display interrupt will cause the
+North Display IIR (DEIIR) PCH Display Interrupt event bit to be set, so all PCH
+Display Interrupts, including back to back interrupts, must be cleared in the
+SDEIIR before a new PCH Display Interrupt can cause the DEIIR to be set.
+
+也就是说South Display Engine会产生中断，并且会设置North Display Engine的DEIIR
+寄存器PCH Display interrupt event位。
+
+GT Interrupt Control Registers
+------------------------------
+
+#define GTISR   0x44010
+#define GTIMR   0x44014
+#define GTIIR   0x44018
+#define GTIER   0x4401c
+
+Ref:
+intel-gfx-prim-hsw.pdf P 3316

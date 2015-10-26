@@ -1,0 +1,28 @@
+writeback workqueue
+===================
+
+mm/backing-dev.c
+bdi_wq = alloc_workqueue()
+
+bdi_init
+	|_cgwb_bdi_init
+		|_wb_init(&bdi->wb);
+			|_INIT_DELAYED_WORK(&wb->dwork, wb_workfn);
+
+queue work
+----------
+wb_start_writeback
+	|_//alloc struct wb_writeback_work
+	|_wb_queue_work
+		|_list_add_tail(&work->list, &wb->work_list);
+		|_mod_delayed_work(bdi_wq, &wb->dwork, 0);
+
+work exec
+---------
+wb_workfn
+	|_wb_do_writeback
+		|_wb_writeback
+			|_writeback_sb_inodes
+			|_wb_update_bandwidth
+				|___wb_update_bandwidth
+					|_wb_update_write_bandwidth

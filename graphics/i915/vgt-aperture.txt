@@ -1,0 +1,55 @@
+Sep 16 07:33:24 cac kernel: [    6.571622] vGT info:(vgt_set_device_type:495) Detected Haswell
+Sep 16 07:33:24 cac kernel: [    6.571677] GEN device info:
+Sep 16 07:33:24 cac kernel: [    6.571747] 	major: 7 minor: 5 rev: 0
+Sep 16 07:33:24 cac kernel: [    6.571822] 	max_gtt_gm_sz: 80000000
+Sep 16 07:33:24 cac kernel: [    6.571892] 	gtt_start_offset: 200000
+Sep 16 07:33:24 cac kernel: [    6.571958] 	max_gtt_size: 400000
+Sep 16 07:33:24 cac kernel: [    6.572017] 	gtt_size_entry: 4
+Sep 16 07:33:24 cac kernel: [    6.572091] 	gtt_entry_size_shift: 2.
+Sep 16 07:33:24 cac kernel: [    6.572572] bar-0 size: 400000
+Sep 16 07:33:24 cac kernel: [    6.572637] bar-1 size: 10000000
+Sep 16 07:33:24 cac kernel: [    6.572686] bar-2 size: 40
+Sep 16 07:33:24 cac kernel: [    6.572785] bar0: 0xf0000004, Bar1: 0xe000000c
+Sep 16 07:33:24 cac kernel: [    6.572887] mmio size: 200000, gtt size: 200000
+Sep 16 07:33:24 cac kernel: [    6.572994] gttmmio: 0xf0000000, gmadr: 0xe0000000
+Sep 16 07:33:24 cac kernel: [    6.573463] gttmmio_base_va: 0xffffc90005380000
+Sep 16 07:33:24 cac kernel: [    6.597057] gmadr_va: 0xffffc90005800000
+Sep 16 07:33:24 cac kernel: [    6.605501] [drm:hsw_unclaimed_reg_detect.isra.9] *ERROR* Unclaimed register detected. Please use the i915.mmio_debug=1 to debug this problem.vGT: GMBUS2 init value: 0, 800
+---------------------------------------------------
+Sep 16 07:33:24 cac kernel: [    6.606620] vGT info:(initialize_gm_fence_allocation_bitmaps:335) total aperture: 0x10000000 bytes, total GM space: 0x80000000 bytes
+Sep 16 07:33:24 cac kernel: [    6.606888] vGT info:(initialize_gm_fence_allocation_bitmaps:357) reserved aperture: [0xee000000, 0xf0000000)
+---------------------------------------------------
+Sep 16 07:33:24 cac kernel: [    6.606973] vGT: setup tracked reg info
+Sep 16 07:33:24 cac kernel: [    6.607371] 909 listed, 682 used
+Sep 16 07:33:24 cac kernel: [    6.607451] total 68318 registers tracked
+Sep 16 07:33:24 cac kernel: [    6.607536] post mmio hooks initialized
+Sep 16 07:33:24 cac kernel: [    6.607774] vGT: irq map [upstream] group: 1, bit: 28 -> [downstream] group: 2, bitmask: 0xffffffff
+Sep 16 07:33:24 cac kernel: [    6.609456] vGT info:(vgt_setup_spt_oos:2035) 2048 oos pages preallocated
+Sep 16 07:33:24 cac kernel: [    6.609684] scratch page is allocated at gm(0xe000000)
+---------------------------------------------------
+Sep 16 07:33:24 cac kernel: [    6.610026] vGT info:(create_vgt_instance:119) vm_id=0, low_gm_sz=96MB, high_gm_sz=384MB, fence_sz=4, vgt_primary=1
+---------------------------------------------------
+Sep 16 07:33:24 cac kernel: [    6.611487] VM0 Ring0 context_save_area is allocated at gm(e011000)
+Sep 16 07:33:24 cac kernel: [    6.611685] VM0 Ring1 context_save_area is allocated at gm(e051000)
+Sep 16 07:33:24 cac kernel: [    6.611885] VM0 Ring2 context_save_area is allocated at gm(e091000)
+Sep 16 07:33:24 cac kernel: [    6.612082] VM0 Ring3 context_save_area is allocated at gm(e0d1000)
+---------------------------------------------------
+Sep 16 07:33:24 cac kernel: [    6.612462] vGT info:(create_vgt_instance:204) aperture: [0xe0000000, 0xe5ffffff] guest [0xe0000000, 0xe5ffffff] va(0xffffc90005800000)
+Sep 16 07:33:24 cac kernel: [    6.612815] vGT info:(create_vgt_instance:215) GM: [0x0, 0x5ffffff], [0x10000000, 0x27ffffff], guest[0x0, 0x5ffffff], [0x10000000, 0x27ffffff]
+Sep 16 07:33:24 cac kernel: [    6.614210] vGT info:(create_vgt_instance:252) filling VGT_PVINFO_PAGE for dom0:
+Sep 16 07:33:24 cac kernel: [    6.614210]    visable_gm_base=0x0, size=0x6000000
+Sep 16 07:33:24 cac kernel: [    6.614210]    hidden_gm_base=0x10000000, size=0x18000000
+Sep 16 07:33:24 cac kernel: [    6.614210]    fence_base=0, num=4
+---------------------------------------------------
+
+
+可以看出，总的aperture为0x10000000bytes大小，为[0xe0000000, 0xf0000000)
+但分给dom0的aperture为96M,为[0xe0000000, 0xe5ffffff]，这是通过参数vp.aperture_sz
+指定的。
+
+此外，在create_vgt_instance中还将这些信息写到了寄存器空间中的struct vgt_if中：
+
+		__vreg(vgt, vgt_info_off(avail_rs.low_gmadr.my_base)) = vgt_visible_gm_base(vgt);
+		__vreg(vgt, vgt_info_off(avail_rs.low_gmadr.my_size)) = vgt_aperture_sz(vgt);
+		__vreg(vgt, vgt_info_off(avail_rs.high_gmadr.my_base)) = vgt_hidden_gm_base(vgt);
+		__vreg(vgt, vgt_info_off(avail_rs.high_gmadr.my_size)) = vgt_hidden_gm_sz(vgt);

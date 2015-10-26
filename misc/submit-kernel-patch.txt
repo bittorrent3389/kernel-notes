@@ -67,6 +67,10 @@ git format-patch -v 2
 git format-patch --subject-prefix=<Subject-Prefix>
 
 -----------------
+example:
+git send-email ./*.patch --to="Steven Rostedt <rostedt@goodmis.org>" --cc=linux-kernel@vger.kernel.org
+
+-----------------
 Ref:
 http://wangcong.org/blog/archives/307
 http://wangcong.org/blog/archives/1742

@@ -1,0 +1,51 @@
+__i915_write(32, l)
+#define __i915_write(x, y) \
+void i915_write##x(struct drm_i915_private *dev_priv, u32 reg,			\
+		u##x val, bool trace)						\
+{										\
+	if (i915_host_mediate)							\
+		vgt_host_write(reg, &val, sizeof(u##x), false, trace);		\
+	else									\
+		dev_priv->uncore.funcs.mmio_write##y(dev_priv,			\
+				(reg), (val), trace);				\
+}
+
+host:
+-----
+
+vgt_host_write
+  |_vgt_ops->mem_write()
+    |_vgt_emulate_write
+	    |_mht = vgt_find_mmio_entry(offset);
+      |_mht->write()
+
+guest:
+------
+
+vgt_emulation_thread
+  |_vgt_hvm_do_ioreq
+    |__hvm_mmio_emulation
+      |_vgt_emulate_write
+        |_mht = vgt_find_mmio_entry(offset);
+        |_mht->write()
+
+eg.:vga_control_w
+i915_load_modeset_init
+  |_intel_modeset_init
+    |_i915_disable_vga
+      |_I915_WRITE(vga_reg, dev_priv->bios_vgacntr | VGA_DISP_DISABLE);
+
+{_REG_CPU_VGACNTRL, 4, F_DOM0, 0, D_ALL, vga_control_r, vga_control_w},
+vga_control_w
+  |_default_mmio_write
+  |_event = vga_disable ? VGT_DISABLE_VGA : VGT_ENABLE_VGA;
+  |_vgt_dpy_stat_notify
+    |_vgt_set_uevent
+    |_vgt_raise_request(pdev, VGT_REQUEST_UEVENT);
+
+vgt_thread
+  |_vgt_signal_uevent
+    |_info_entry->vgt_uevent_handler()
+      vgt_dpy_stat_uevent_handler
+        |_vgt_default_uevent_handler
+          |_kobject_uevent_env

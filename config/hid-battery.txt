@@ -1,0 +1,27 @@
+自己编译的内核没有触摸板电量提示，通过upower启动时的日志来看其
+没有打开设备
+/sys/devices/pci0000:00/0000:00:14.0/usb3/3-5/3-5:1.0/bluetooth/hci0/hci0:71/0005:05AC:030E.0002/power_supply/hid-84:38:35:39:22:32-battery
+
+原因是内核没有创建设备
+wjx@wjx-desktop:~$ ls /sys/class/power_supply/ -l
+total 0
+lrwxrwxrwx 1 root root 0 Dec 29 06:55 hid-84:38:35:39:22:32-battery -> ../../devices/pci0000:00/0000:00:14.0/usb3/3-5/3-5:1.0/bluetooth/hci0/hci0:71/0005:05AC:030E.0002/power_supply/hid-84:38:35:39:22:32-battery
+
+这种power_supply类的设备是在power_supply_register里创建的。
+
+问题在于编译时没有打开选项CONFIG_HID_BATTERY_STRENGTH ，因此
+drivers/hid/hid-input.c中的hidinput_setup_battery()函数没有实现。
+
+但根据drivers/hid/Kconfig
+
+config HID_BATTERY_STRENGTH
+	bool "Battery level reporting for HID devices"
+	depends on HID && POWER_SUPPLY && HID = POWER_SUPPLY
+	default n
+	---help---
+	This option adds support of reporting battery strength (for HID devices
+	that support this feature) through power_supply class so that userspace
+	tools, such as upower, can display it.
+
+在新内核里要把CONFIG_HID设置为y时才会出现CONFIG_HID_BATTERY_STRENGTH选项，
+但为何ubuntu的内核里CONFIG_HID=m CONFIG_HID_BATTERY_STRENGTH=y ?

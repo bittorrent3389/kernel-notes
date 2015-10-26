@@ -1,0 +1,38 @@
+vgt下domU的vblank中断
+=====================
+
+vgt_irq_init
+	dpy_timer->timer.function = vgt_dpy_timer_fn;
+	dpy_timer->period = VGT_DPY_EMUL_PERIOD;
+
+vgt_dpy_timer_fn
+	|_vgt_raise_request(pdev, VGT_REQUEST_EMUL_DPY_EVENTS);
+		|_wake_up(&pdev->event_wq);
+
+vgt_thread
+  |_vgt_emulate_dpy_events
+    |_vgt_emulate_vblank
+        |_vgt_trigger_virtual_event
+            |_vgt_handle_default_event_virt
+              |_vgt_propagate_event
+                |_set_bit(bit, (void*)vgt_vreg(vgt, regbase_to_iir(reg_base)));
+
+ops->check_pending_irq(vgt);
+vgt_base_check_pending_irq
+  |_vgt_inject_virtual_interrupt
+    |_hypervisor_inject_msi
+      |_vgt_pkdm->inject_msi()
+      	|_xen_inject_msi
+	  |_HYPERVISOR_hvm_op(HVMOP_inject_msi, &info);
+
+vgt_base_check_pending_irq中在调用vgt_inject_virtual_interrupt之前会检查
+	if ((__vreg(vgt, _REG_DEIIR) & __vreg(vgt, _REG_DEIER)) ||
+vgt的_REG_DEIIR寄存器中PIPE_A_VBLANK的相应位(位0, 见vgt_base_init_irq)
+已经在vgt_propagate_event中设置。
+
+而_REG_DEIER中的对应位也已经在ironlake_irq_postinstall打开:
+ironlake_irq_postinstall
+  extra_mask = (DE_PIPEA_VBLANK_IVB ...);
+  GEN5_IRQ_INIT(DE, dev_priv->irq_mask, display_mask | extra_mask);
+
+#define DE_PIPEA_VBLANK_IVB		(1<<0)

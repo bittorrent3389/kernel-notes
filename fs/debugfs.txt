@@ -47,6 +47,18 @@ struct dentry *debugfs_create_file(const char *name, mode_t mode,
            data, fops);
 }
 
+在第一次调用debugfs_create_file时，如果此时尚未在用户空间mount，则会通过
+simple_pin_fs->vfs_kern_mount->mount_fs->debug_mount->mount_single->debug_fill_super
+->simple_fill_super创建超级块、vfsmount以及对应根目录的dentry结构，所以在后面手动mount时，
+通过vfs_kern_mount->mount_fs->debug_mount->mount_single就可以找到已经创建
+的超级块进而找到创建的根目录dentry结构，进而在根目录下面创建的目录以及文件就都能找到了。
+如果用户空间mount先于debugfs_create_file调用，则这里
+simple_pin_fs->vfs_kern_mount也会找到其创建的超级块以及根目录dentry结构，进而在里面创建文件。
+
+Ubuntu系统在用户空间的mount debugfs的：
+sudo grep -rsw debugfs /etc/
+
+
 进而由 debugfs_create_by_name实现：
 static int debugfs_create_by_name(const char *name, mode_t mode,
       struct dentry *parent,

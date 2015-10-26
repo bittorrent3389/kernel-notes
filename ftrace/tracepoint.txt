@@ -1,0 +1,147 @@
+
+[include/trace/trace_events.h]
+#undef DECLARE_EVENT_CLASS
+#define DECLARE_EVENT_CLASS(call, proto, args, tstruct, assign, print)	\
+static notrace enum print_line_t					\
+trace_raw_output_##call(struct trace_iterator *iter, int flags,		\
+			struct trace_event *trace_event)		\
+{									\
+	struct trace_seq *s = &iter->seq;				\
+	struct trace_seq __maybe_unused *p = &iter->tmp_seq;		\
+	struct trace_event_raw_##call *field;				\
+	int ret;							\
+									\
+	field = (typeof(field))iter->ent;				\
+									\
+	ret = trace_raw_output_prep(iter, trace_event);			\
+	if (ret != TRACE_TYPE_HANDLED)					\
+		return ret;						\
+									\
+	trace_seq_printf(s, print);					\
+									\
+	return trace_handle_return(s);					\
+}									\
+static struct trace_event_functions trace_event_type_funcs_##call = {	\
+	.trace			= trace_raw_output_##call,		\
+};
+
+[include/trace/perf.h]
+#undef DECLARE_EVENT_CLASS
+#define DECLARE_EVENT_CLASS(call, proto, args, tstruct, assign, print)	\
+									\
+static notrace void							\
+trace_event_raw_event_##call(void *__data, proto)			\
+{									\
+	struct trace_event_file *trace_file = __data;			\
+	struct trace_event_data_offsets_##call __maybe_unused __data_offsets;\
+	struct trace_event_buffer fbuffer;				\
+	struct trace_event_raw_##call *entry;				\
+	int __data_size;						\
+									\
+	if (trace_trigger_soft_disabled(trace_file))			\
+		return;							\
+									\
+	__data_size = trace_event_get_offsets_##call(&__data_offsets, args); \
+									\
+	entry = trace_event_buffer_reserve(&fbuffer, trace_file,	\
+				 sizeof(*entry) + __data_size);		\
+									\
+	if (!entry)							\
+		return;							\
+									\
+	tstruct								\
+									\
+	{ assign; }							\
+									\
+	trace_event_buffer_commit(&fbuffer);				\
+}
+#undef DECLARE_EVENT_CLASS
+#define DECLARE_EVENT_CLASS(call, proto, args, tstruct, assign, print)	\
+_TRACE_PERF_PROTO(call, PARAMS(proto));					\
+static char print_fmt_##call[] = print;					\
+static struct trace_event_class __used __refdata event_class_##call = { \
+	.system			= TRACE_SYSTEM_STRING,			\
+	.define_fields		= trace_event_define_fields_##call,	\
+	.fields			= LIST_HEAD_INIT(event_class_##call.fields),\
+	.raw_init		= trace_event_raw_init,			\
+	.probe			= trace_event_raw_event_##call,		\
+	.reg			= trace_event_reg,			\
+	_TRACE_PERF_INIT(call)						\
+};
+
+#undef DEFINE_EVENT
+#define DEFINE_EVENT(template, call, proto, args)			\
+									\
+static struct trace_event_call __used event_##call = {			\
+	.class			= &event_class_##template,		\
+	{								\
+		.tp			= &__tracepoint_##call,		\
+	},								\
+	.event.funcs		= &trace_event_type_funcs_##template,	\
+	.print_fmt		= print_fmt_##template,			\
+	.flags			= TRACE_EVENT_FL_TRACEPOINT,		\
+};									\
+static struct trace_event_call __used					\
+__attribute__((section("_ftrace_events"))) *__event_##call = &event_##call
+
+enable event:
+-------------
+__ftrace_event_enable_disable
+        |_call->class->reg()
+          trace_event_reg()
+                |_tracepoint_probe_register(call->tp,call->class->probe,file)
+                        |_tracepoint_add_func
+
+
+这里就为这个tp注册了一个probe，tp执行时：
+----------------------------------------
+include/linux/tracepoint.h
+trace_##name(proto)
+        |___DO_TRACE
+就会执行这个probe:
+trace_event_raw_event_##call
+        |_trace_event_buffer_reserve
+        |_trace_event_buffer_commit
+将数据写入buffer.
+
+
+从trace文件读数据：
+------------------
+注册event:
+event_trace_enable
+        |_event_init()
+                |_call->class->raw_init(call);
+                  trace_event_raw_init
+                        |_register_trace_event(&call->event);
+                                |_hlist_add_head(&event->node, &event_hash[key]);
+print_trace_fmt
+        |_ftrace_find_event()
+        |_event->funcs->trace(iter, sym_flags, event);
+          trace_raw_output_##call
+这里会通过trace_seq_printf()将TRACE_EVENT中定义的print格式化字符串写入trace_seq中。
+
+
+为tracepoint添加额外的probe:
+----------------------------
+[include/linux/tracepoint.h]中的宏__DECLARE_TRACE还定义了register_trace_##name()
+#define __DECLARE_TRACE(name, proto, args, cond, data_proto, data_args) \
+	static inline int						\
+	register_trace_##name(void (*probe)(data_proto), void *data)	\
+	{								\
+		return tracepoint_probe_register(&__tracepoint_##name,	\
+						(void *)probe, data);	\
+	}								\
+
+可以通过这个register函数来添加，如：
+[kernel/trace/trace_sched_switch.c]
+static void
+probe_sched_switch(void *ignore, struct task_struct *prev, struct task_struct *next)
+{
+	if (unlikely(!sched_ref))
+		return;
+
+	tracing_record_cmdline(prev);
+	tracing_record_cmdline(next);
+}
+
+register_trace_sched_switch(probe_sched_switch, NULL);

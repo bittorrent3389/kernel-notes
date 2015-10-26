@@ -1,0 +1,35 @@
+
+scsi sd driver register:
+------------------------
+drivers/scsi/sd.c
+init_sd
+  |_scsi_register_driver
+
+而对应的scsi_device的创建：
+drivers/scsi/scsi_scan.c
+scsi_probe_and_add_lun
+  |_scsi_alloc_sdev
+        //这里还创建了sdev->request_queue
+      |_scsi_alloc_queue
+
+sd驱动的probe为：
+sd_probe
+     //分配gendisk结构并为其调用device_initialize
+  |_alloc_disk
+  |_创建并注册一个scsi_disk设备。
+  |_sd_probe_async
+    |_gd->queue = sdkp->device->request_queue;
+    |_add_disk
+      |_bdi = &disk->queue->backing_dev_info;
+      |_bdi_register_dev()
+        |_bdi_register()
+	  //创建bdi_class的bdi设备:
+	  ///sys/devices/virtual/bdi/8:0/
+	  ///sys/class/bdi/8:0
+	  |_device_create_vargs	
+	  //创建bdi debugfs文件：
+	  ///sys/kernel/debug/bdi/8:0/
+	  |_bdi_debug_register
+        //为其调用device_add
+      |_register_disk
+      |_blk_register_queue
